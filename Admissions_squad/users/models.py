@@ -6,7 +6,7 @@ import re
 
 class CustomUser(AbstractUser):
     email = models.EmailField('Email', unique=True, error_messages={'unique': 'Пользователь с таким Email уже существует.'})
-    username = models.CharField('Имя пользователя', max_length=150, unique=True, blank=True, null=True, help_text='Автоматически генерируется из email (часть до символа @)')
+    username = models.CharField('Имя пользователя', max_length=150, unique=True, help_text='Обязательное поле. Не более 150 символов.')
     middle_name = models.CharField("Отчество", max_length=150, blank=True)
     phone = PhoneNumberField('Номер телефона', unique=True, max_length=30, blank=True, null=True, region='RU', help_text="Формат: +7XXXXXXXXXX", error_messages={'unique': 'Этот номер телефона уже используется.'})
     is_blocked = models.BooleanField('Заблокирован', default=False)
@@ -14,7 +14,7 @@ class CustomUser(AbstractUser):
     updated_at = models.DateTimeField('Дата обновления', auto_now=True)
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['first_name','last_name']
+    REQUIRED_FIELDS = ['first_name', 'last_name', 'username']
     class Meta:
         verbose_name = "Пользователь"
         verbose_name_plural = "Пользователи"
@@ -47,15 +47,4 @@ class CustomUser(AbstractUser):
     def save(self, *args, **kwargs):
         if self.email:
             self.email = self.email.lower().strip()
-
-        if self.email and not self.username:
-            username = self.email.split('@')[0]
-            if len(username) > 150:
-                username = username[:150]
-            origin_username = username
-            counter = 1
-            while CustomUser.objects.filter(username=username).exclude(pk=self.pk).exists():
-                username = f'{origin_username}_{counter}'
-                counter += 1
-            self.username = username
-            super().save(*args, **kwargs)
+        super().save(*args, **kwargs)

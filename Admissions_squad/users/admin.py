@@ -11,7 +11,7 @@ class CustomUserAdmin(UserAdmin):
     
     # Добавляем поля при создании пользователя
     add_fieldsets = UserAdmin.add_fieldsets + (
-        ("Дополнительная информация", {"fields": ("middle_name", "phone", "email")}),
+        ("Дополнительная информация", {"fields": ("last_name", "first_name","middle_name", "phone", "email")}),
     )
     
     list_display = ("username", "email", "get_full_name", "phone", "is_staff")
