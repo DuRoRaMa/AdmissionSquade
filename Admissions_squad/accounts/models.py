@@ -48,3 +48,30 @@ class CustomUser(AbstractUser):
         if self.email:
             self.email = self.email.lower().strip()
         super().save(*args, **kwargs)
+
+class Role(models.Model):
+    name = models.CharField('Роль пользователя', max_length=50, unique=True)
+    class Meta():
+        verbose_name = "Роль в отряде"
+        verbose_name_plural = "Роли в отрядах"
+    def __str__(self):
+        return self.name
+class SquadMembership(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='membersips')
+    squad = models.ForeignKey('squads.Squad', on_delete=models.CASCADE, related_name='memberships')
+    role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True)
+    joined_date = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta():
+        verbose_name = "Членство в отряде"
+        verbose_name_plural = "Челенства в отрядах"
+
+class MembershipFee(models.Model):
+    membership = models.ForeignKey(SquadMembership, on_delete=models.CASCADE, related_name='fees')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    paid_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    class Meta():
+        verbose_name = "Членский взнос"
+        verbose_name_plural = "Челенские взносы"

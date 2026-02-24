@@ -1,7 +1,7 @@
 
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import CustomTokenObtainPairSerializer
-from users.models import CustomUser
+from accounts.models import CustomUser
 # Create your views here.
 
 

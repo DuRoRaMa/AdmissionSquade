@@ -1,5 +1,5 @@
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from users.models import CustomUser
+from accounts.models import CustomUser
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):

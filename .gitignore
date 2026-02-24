@@ -1,4 +1,5 @@
 .Python
+.vscode/
 build/
 develop-eggs/
 dist/

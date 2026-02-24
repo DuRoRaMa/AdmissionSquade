@@ -40,12 +40,10 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'phonenumber_field',
-    'users',
+    'accounts',
     'squads',
-    'availability',
-    'schedule',
-    'attendance',
-    'finance',
+    'rosters',
+    'notifications',
     'authorizations',
 ]
 
@@ -59,7 +57,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-AUTH_USER_MODEL = 'users.CustomUser'
+AUTH_USER_MODEL = 'accounts.CustomUser'
 
 PHONENUMBER_DEFAULT_REGION = 'RU'  # Россия по умолчанию
 PHONENUMBER_DB_FORMAT = 'E164'  # Формат хранения в БД
