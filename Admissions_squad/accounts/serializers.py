@@ -2,7 +2,8 @@ from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import CustomUser
+from .models import CustomUser, Role 
+from squads.models import Squad, SquadMembership, MembershipFee
 import re
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -60,8 +61,32 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             **validated_data
         )
         return user
-    
+
+
+class SquadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Squad
+        fields = ('name',)
+class RoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Role
+        fields = ('name',)
+
+class MembershipFeeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MembershipFee
+        fields = ('amount', 'paid_at', 'expires_at')
+
+class SquadMembershipSerializer(serializers.ModelSerializer):
+    role = RoleSerializer(read_only=True)
+    squad = SquadSerializer(read_only=True)
+    fees =  MembershipFeeSerializer(many=True, read_only=True)
+    class Meta:
+        model = SquadMembership
+        fields = ('role', 'squad', 'joined_date', 'is_active', 'fees')
+
 class ProfileUserSerializer(serializers.ModelSerializer):
+    memberships = SquadMembershipSerializer(many=True, read_only=True, source='membersips')
     class Meta:
         model = CustomUser
         fields = (
@@ -74,6 +99,7 @@ class ProfileUserSerializer(serializers.ModelSerializer):
             'is_blocked',
             'created_at',
             'updated_at',
+            'memberships',
             )
         read_only_fields = (
             'email',
@@ -81,6 +107,7 @@ class ProfileUserSerializer(serializers.ModelSerializer):
             'is_blocked',
             'created_at',
             'updated_at',
+            'memberships',
         )
         
         def validate_phone(self, value):

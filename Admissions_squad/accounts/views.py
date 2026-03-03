@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from .serializers import UserRegistrationSerializer, ProfileUserSerializer
+from .models import CustomUser
 # Create your views here.
 
 
@@ -30,3 +31,12 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+    
+    def get_queryset(self):
+        # Оптимизация загрузки связанных данных
+        return CustomUser.objects.filter(pk=self.request.user.pk).prefetch_related(
+            'membersips__squad',      # загружаем отряды для каждого членства
+            'membersips__role',        # загружаем роли
+            'membersips__fees',        # загружаем взносы для каждого членства
+        )
+    
