@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, include
 from accounts.views import (
     UserProfileView, UserListView, UserDetailView, ChangePasswordView,
     RoleListCreateView, RoleDetailView
@@ -16,11 +16,11 @@ urlpatterns = [
     path('users/me/', UserProfileView.as_view(), name='user_profile'),
     path('users/me/change-password/', ChangePasswordView.as_view(), name='change_password'),
     
-    # Управление пользователями (админ)
+    # Управление пользователями (только для администраторов)
     path('users/', UserListView.as_view(), name='user_list'),
     path('users/<int:pk>/', UserDetailView.as_view(), name='user_detail'),
     
-    # Управление ролями (админ)
+    # Управление ролями (только для администраторов)
     path('users/roles/', RoleListCreateView.as_view(), name='role_list_create'),
     path('users/roles/<int:pk>/', RoleDetailView.as_view(), name='role_detail'),
 ]

@@ -1,29 +1,14 @@
-from rest_framework import generics
+from rest_framework import generics, status
+from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import AllowAny
-from .serializers import UserRegistrationSerializer, ProfileUserSerializer
-from .models import CustomUser
-# Create your views here.
-
-
-class RegistrationView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        serializer = UserRegistrationSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
-            return Response({
-                'username': user.username,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'massage': 'Пользователь успешно создан'
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+from django.shortcuts import get_object_or_404
+from .models import CustomUser, Role
+from .serializers import (
+    ProfileUserSerializer, UserListSerializer, UserDetailSerializer,
+    UserUpdateSerializer, ChangePasswordSerializer, RoleSerializer
+)
+from .permissions import IsAdmin, IsSelfOrAdmin, IsAdminOrReadOnly
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
@@ -31,12 +16,65 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+class UserListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = UserListSerializer
+    queryset = CustomUser.objects.all().order_by('-date_joined')
     
     def get_queryset(self):
-        # Оптимизация загрузки связанных данных
-        return CustomUser.objects.filter(pk=self.request.user.pk).prefetch_related(
-            'membersips__squad',      # загружаем отряды для каждого членства
-            'membersips__role',        # загружаем роли
-            'membersips__fees',        # загружаем взносы для каждого членства
-        )
+        qs = super().get_queryset()
+        # Фильтрация по параметрам запроса
+        role = self.request.query_params.get('role')
+        if role:
+            # фильтрация по роли (через членства)
+            qs = qs.filter(membersips__role__name=role).distinct()
+        squad = self.request.query_params.get('squad')
+        if squad:
+            qs = qs.filter(membersips__squad__id=squad).distinct()
+        is_blocked = self.request.query_params.get('is_blocked')
+        if is_blocked is not None:
+            qs = qs.filter(is_blocked=is_blocked.lower() == 'true')
+        return qs
+
+# --- Детали пользователя (админ или сам пользователь) ---
+class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated, IsSelfOrAdmin]
+    queryset = CustomUser.objects.all()
     
+    def get_serializer_class(self):
+        if self.request.method in ['PUT', 'PATCH']:
+            return UserUpdateSerializer
+        return UserDetailSerializer
+    
+    def delete(self, request, *args, **kwargs):
+        user = self.get_object()
+        # Вместо удаления делаем деактивацию (блокировку)
+        user.is_active = False
+        user.is_blocked = True
+        user.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+# --- Смена пароля текущего пользователя ---
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            user = request.user
+            user.set_password(serializer.validated_data['new_password'])
+            user.save()
+            return Response({'detail': 'Пароль успешно изменён.'}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# --- CRUD для ролей (только админ) ---
+class RoleListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer
+
+class RoleDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer

@@ -7,7 +7,6 @@ class MembershipFeeInline(admin.TabularInline):
     model = MembershipFee
     extra = 0  # сколько пустых форм показывать
     fields = ('amount', 'paid_at', 'expires_at')
-    readonly_fields = ('paid_at',)
 
 @admin.register(SquadMembership)
 class SquadMembershipAdmin(admin.ModelAdmin):
