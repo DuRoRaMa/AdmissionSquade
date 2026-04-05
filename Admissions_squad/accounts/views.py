@@ -6,7 +6,9 @@ from django.shortcuts import get_object_or_404
 from .models import CustomUser, Role
 from .serializers import (
     ProfileUserSerializer, UserListSerializer, UserDetailSerializer,
-    UserUpdateSerializer, ChangePasswordSerializer, RoleSerializer
+    UserUpdateSerializer, ChangePasswordSerializer, RoleSerializer,
+    PassportSerializer, UserStudyInfoSerializer
+
 )
 from .permissions import IsAdmin, IsSelfOrAdmin, IsAdminOrReadOnly
 
@@ -78,3 +80,36 @@ class RoleDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
+
+# Добавить в конец файла
+
+class UserStudyInfoView(generics.RetrieveUpdateAPIView):
+    """Просмотр и редактирование учебной информации текущего пользователя"""
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserStudyInfoSerializer  # один сериализатор для чтения и записи
+
+    def get_object(self):
+        # Возвращаем объект, если он существует, иначе 404
+        return self.request.user.study_info
+
+    def post(self, request, *args, **kwargs):
+        # Создание новой записи
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class PassportView(generics.RetrieveUpdateAPIView):
+    """Просмотр и редактирование паспортных данных текущего пользователя"""
+    permission_classes = [IsAuthenticated]
+    serializer_class = PassportSerializer  # один сериализатор
+
+    def get_object(self):
+        return self.request.user.passport
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

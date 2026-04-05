@@ -58,6 +58,7 @@ class ProfileUserSerializer(serializers.ModelSerializer):
             'memberships',
             'study_info',
             'passport',
+            'is_staff'
         )
         read_only_fields = (
             'email',
@@ -68,6 +69,7 @@ class ProfileUserSerializer(serializers.ModelSerializer):
             'memberships',
             'study_info',
             'passport',
+            'is_staff'
         )
     def get_memberships(self, obj):
         from squads.serializers import SquadMembershipSerializer
@@ -191,3 +193,4 @@ class ChangePasswordSerializer(serializers.Serializer):
         if attrs['new_password'] != attrs['confirm_new_password']:
             raise serializers.ValidationError({'confirm_new_password': 'Новые пароли не совпадают.'})
         return attrs
+# Добавить после существующих сериализаторов

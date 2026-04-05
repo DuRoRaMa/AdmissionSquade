@@ -168,7 +168,21 @@ class Passport(models.Model):
 
         if self.date_of_issue and self.date_of_issue > timezone.now().date():
             raise ValidationError({'date_of_issue': 'Дата выдачи не может быть в будущем.'})
+        if self.user and self.user.birth_day:
+            birth_date = self.user.birth_day
+            issue_date = self.date_of_issue
 
+            if issue_date < birth_date:
+                raise ValidationError({
+                    'date_of_issue': 'Дата выдачи паспорта не может быть раньше даты рождения.'
+                })
+
+            # Вычисляем дату, когда пользователю исполнилось 14 лет
+            fourteen_years_later = birth_date.replace(year=birth_date.year + 14)
+            if issue_date < fourteen_years_later:
+                raise ValidationError({
+                    'date_of_issue': 'Паспорт может быть выдан не ранее достижения 14 лет.'
+                })
     def save(self, *args, **kwargs):
         if self.unit_code:
             self.unit_code = self.unit_code.replace('-', '')

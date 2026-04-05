@@ -1,27 +1,62 @@
 from rest_framework import serializers
-from django.contrib.auth.password_validation import validate_password
 from .models import Squad, SquadMembership, MembershipFee
+from accounts.serializers import RoleSerializer, UserListSerializer
+
 
 class SquadSerializer(serializers.ModelSerializer):
+    member_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Squad
-        fields = ('name', 'regional_office', 'region', 'employer')
+        fields = (
+            'id', 'name', 'description', 'regional_office', 'region',
+            'employer', 'lso_directions', 'created_at', 'member_count'
+        )
+        read_only_fields = ('id', 'created_at', 'member_count')
+
+    def get_member_count(self, obj):
+        return obj.memberships.filter(is_active=True).count()
+
 
 class MembershipFeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = MembershipFee
-        fields = ('amount', 'paid_at', 'expires_at')
+        fields = ('id', 'amount', 'paid_at', 'expires_at')
+        read_only_fields = ('id',)
+
+    def validate(self, data):
+        if data['paid_at'] > data['expires_at']:
+            raise serializers.ValidationError('Дата истечения не может быть раньше даты уплаты.')
+        return data
+
 
 class SquadMembershipSerializer(serializers.ModelSerializer):
-    role = serializers.SerializerMethodField()
-    squad = SquadSerializer(read_only=True)
-    fees =  MembershipFeeSerializer(many=True, read_only=True)
+    role_detail = RoleSerializer(source='role', read_only=True)
+    squad_detail = SquadSerializer(source='squad', read_only=True)
+    user_detail = serializers.SerializerMethodField()
+    fees = MembershipFeeSerializer(many=True, read_only=True)
+
     class Meta:
         model = SquadMembership
-        fields = ('role', 'squad', 'university', 'joined_date', 'is_active', 'fees')
-    
-    def get_role(self, obj):
-        from accounts.serializers import RoleSerializer  # отложенный импорт
-        if obj.role:
-            return RoleSerializer(obj.role).data
-        return None
+        fields = (
+            'id', 'user', 'user_detail', 'squad', 'squad_detail', 'role', 'role_detail',
+            'ticket_number', 'university', 'joined_date', 'is_active', 'fees'
+        )
+        read_only_fields = ('id', 'joined_date', 'user_detail', 'squad_detail', 'role_detail', 'fees')
+
+    def get_user_detail(self, obj):
+        return UserListSerializer(obj.user).data if obj.user else None
+
+    def validate(self, data):
+        # Проверка уникальности для пары (user, squad) при создании
+        if not self.instance:
+            user = data.get('user')
+            squad = data.get('squad')
+            if SquadMembership.objects.filter(user=user, squad=squad, is_active=True).exists():
+                raise serializers.ValidationError('Пользователь уже состоит в этом отряде.')
+            # Проверка, что пользователь не состоит активным в другом отряде
+            if SquadMembership.objects.filter(user=user, is_active=True).exclude(squad=squad).exists():
+                raise serializers.ValidationError(
+                    'Пользователь уже состоит в другом отряде. Сначала выйдите из текущего.'
+                )
+        return data
