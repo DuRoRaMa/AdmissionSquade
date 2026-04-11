@@ -42,7 +42,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         value = value.lower().strip()
-        dvfu_email_regex = r'^[a-zA-z0-9]+@(?:dvfu\.ru|students\.dvfu\.ru)$'
+        dvfu_email_regex = r'^[a-zA-Z0-9._%+-]+@(?:dvfu\.ru|students\.dvfu\.ru)$'
         if not re.match(dvfu_email_regex, value):
             raise serializers.ValidationError(
                 'Разрешены только email адреса ДВФУ: name@dvfu.ru или name@students.dvfu.ru'
