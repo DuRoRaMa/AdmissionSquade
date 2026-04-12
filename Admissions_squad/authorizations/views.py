@@ -18,9 +18,11 @@ class RegistrationView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             return Response({
-                'username': user.username,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'massage': 'Пользователь успешно создан'
+                'message': 'Пользователь успешно создан',
+                'data': {
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                }
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

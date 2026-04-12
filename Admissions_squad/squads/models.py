@@ -19,7 +19,7 @@ class Squad(models.Model):
         return self.name
 
 class SquadMembership(models.Model):
-    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, related_name='membersips', null=True)
+    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, related_name='memberships', null=True)
     squad = models.ForeignKey(Squad, on_delete=models.CASCADE, related_name='memberships')
     role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True)
     ticket_number = models.CharField('Номер членского билета', blank=True, null=True)
