@@ -21,7 +21,7 @@ class UserStudyInfoSerializer(serializers.ModelSerializer):
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Role
-        fields = ('id', 'name',)
+        fields = ('id', 'name', 'slug')
 class PassportSerializer(serializers.ModelSerializer):
     class Meta:
         model = Passport

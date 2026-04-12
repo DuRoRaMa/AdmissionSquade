@@ -7,6 +7,24 @@ from squads.views import (
     SquadMembershipListCreateView, SquadMembershipDetailView,
     MembershipFeeListCreateView, MembershipFeeDetailView
 )
+from rosters.views import (
+    AvailabilityFormListCreateView,
+    AvailabilityFormOpenView,
+    AvailabilityFormCloseView,
+    ActiveAvailabilityFormView,
+    SubmitAvailabilityView,
+    ScheduleListCreateView,
+    GenerateScheduleView,
+    PublishScheduleView,
+    MyScheduleView,
+    ChangeRequestCreateView,
+    MyChangeRequestsView,
+    ChangeRequestListView,
+    ApproveChangeRequestView,
+    RejectChangeRequestView,
+    CreateQrTokenView,
+    ScanQrView,
+)
 
 urlpatterns = [
     # Пользователи и аутентификация
@@ -33,4 +51,24 @@ urlpatterns = [
     # Взносы
     path('squads/members/<int:membership_id>/fees/', MembershipFeeListCreateView.as_view(), name='membership_fees_list_create'),
     path('squads/fees/<int:pk>/', MembershipFeeDetailView.as_view(), name='membership_fee_detail'),
+    #Форма
+    path('rosters/forms/', AvailabilityFormListCreateView.as_view()),
+    path('rosters/forms/active/', ActiveAvailabilityFormView.as_view()),
+    path('rosters/forms/<int:pk>/open/', AvailabilityFormOpenView.as_view()),
+    path('rosters/forms/<int:pk>/close/', AvailabilityFormCloseView.as_view()),
+    path('rosters/forms/<int:pk>/submit/', SubmitAvailabilityView.as_view()),
+    #График
+    path('rosters/schedules/', ScheduleListCreateView.as_view()),
+    path('rosters/schedules/<int:pk>/generate/', GenerateScheduleView.as_view()),
+    path('rosters/schedules/<int:pk>/publish/', PublishScheduleView.as_view()),
+    path('rosters/my-schedule/', MyScheduleView.as_view()),
+    #Изменение графика
+    path('rosters/change-requests/', ChangeRequestListView.as_view()),
+    path('rosters/change-requests/create/', ChangeRequestCreateView.as_view()),
+    path('rosters/my-change-requests/', MyChangeRequestsView.as_view()),
+    path('rosters/change-requests/<int:pk>/approve/', ApproveChangeRequestView.as_view()),
+    path('rosters/change-requests/<int:pk>/reject/', RejectChangeRequestView.as_view()),
+    #Отметки и смены
+    path('rosters/entries/<int:entry_id>/qr/', CreateQrTokenView.as_view()),
+    path('rosters/scan-qr/', ScanQrView.as_view()),
 ]
