@@ -86,7 +86,7 @@ class CustomUser(AbstractUser):
 
 class Role(models.Model):
     name = models.CharField('Роль пользователя', max_length=50, unique=True)
-
+    slug = models.SlugField(max_length=50, unique=True)
     class Meta:
         verbose_name = "Роль в отряде"
         verbose_name_plural = "Роли в отрядах"

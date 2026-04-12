@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q, UniqueConstraint
 from accounts.models import CustomUser, Role
 # Create your models here.
 
@@ -28,7 +29,13 @@ class SquadMembership(models.Model):
     is_active = models.BooleanField(default=True)
     
     class Meta():
-        unique_together = ('user', 'squad')
+        constraints = [
+            UniqueConstraint(
+                fields=['user'],
+                condition=Q(is_active=True),
+                name='unique_active_membership_per_user'
+            )
+        ]
         verbose_name = "Членство в отряде"
         verbose_name_plural = "Членства в отрядах"
 

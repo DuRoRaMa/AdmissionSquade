@@ -30,10 +30,10 @@ class UserListView(generics.ListAPIView):
         role = self.request.query_params.get('role')
         if role:
             # фильтрация по роли (через членства)
-            qs = qs.filter(membersips__role__name=role).distinct()
+            qs = qs.filter(memberships__role__name=role).distinct()
         squad = self.request.query_params.get('squad')
         if squad:
-            qs = qs.filter(membersips__squad__id=squad).distinct()
+            qs = qs.filter(memberships__squad__id=squad).distinct()
         is_blocked = self.request.query_params.get('is_blocked')
         if is_blocked is not None:
             qs = qs.filter(is_blocked=is_blocked.lower() == 'true')

@@ -73,7 +73,7 @@ class ProfileUserSerializer(serializers.ModelSerializer):
         )
     def get_memberships(self, obj):
         from squads.serializers import SquadMembershipSerializer
-        memberships = obj.membersips.all()  # если related_name = 'membersips'
+        memberships = obj.memberships.all()  # если related_name = 'memberships'
         return SquadMembershipSerializer(memberships, many=True).data
     # ----- Валидаторы -----
     def validate_phone(self, value):
@@ -148,7 +148,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     
     def get_memberships(self, obj):
         from squads.serializers import SquadMembershipSerializer
-        memberships = obj.membersips.filter(is_active=True)  # только активные
+        memberships = obj.memberships.filter(is_active=True)  # только активные
         return SquadMembershipSerializer(memberships, many=True).data
 
 # --- Сериализатор для админского обновления пользователя ---

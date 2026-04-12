@@ -28,7 +28,7 @@ class IsSquadCommander(BasePermission):
             squad = obj
         return squad.memberships.filter(
             user=request.user,
-            role__name__in=['Командир', 'Commander'],
+            role__slug='commander',
             is_active=True
         ).exists()
 
@@ -55,7 +55,7 @@ class CanManageMembershipCreate(BasePermission):
                 squad = Squad.objects.get(pk=squad_id)
                 return squad.memberships.filter(
                     user=request.user,
-                    role__name__in=['Командир', 'Commander'],
+                    role__slug='commander',
                     is_active=True
                 ).exists()
             except Squad.DoesNotExist:
@@ -75,7 +75,7 @@ class CanViewMembership(BasePermission):
         # Командир отряда
         return obj.squad.memberships.filter(
             user=request.user,
-            role__name__in=['Командир', 'Commander'],
+            role__slug='commander',
             is_active=True
         ).exists()
 
@@ -87,7 +87,7 @@ class CanManageMembershipUpdate(BasePermission):
             return True
         return obj.squad.memberships.filter(
             user=request.user,
-            role__name__in=['Командир', 'Commander'],
+            role__slug='commander',
             is_active=True
         ).exists()
 
@@ -102,7 +102,7 @@ class CanManageFees(BasePermission):
         squad = obj.membership.squad
         return squad.memberships.filter(
             user=request.user,
-            role__name__in=['Командир', 'Commander'],
+            role__slug='commander',
             is_active=True
         ).exists()
 
@@ -119,7 +119,7 @@ class CanManageFees(BasePermission):
                 squad = membership.squad
                 return squad.memberships.filter(
                     user=request.user,
-                    role__name__in=['Командир', 'Commander'],
+                    role__slug='commander',
                     is_active=True
                 ).exists()
             except SquadMembership.DoesNotExist:
