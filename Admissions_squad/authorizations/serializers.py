@@ -7,8 +7,22 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     username_field = 'email'
 
     def validate(self, attrs):
-        data = super().validate(attrs)
-        return data
+        email = attrs.get("email", "").lower().strip()
+        try:
+            user = CustomUser.objects.get(email=email)
+        except CustomUser.DoesNotExist:
+            raise serializers.ValidationError({
+                "detail": "Неверный email или пароль."
+            })
+        if not user.is_active:
+            raise serializers.ValidationError({
+                "detail": "Учетная запись деактивирована."
+            })
+        if user.is_blocked:
+            raise serializers.ValidationError({
+                "detail": "Учетная запись заблокирована."
+            })
+        return super().validate(attrs)
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
