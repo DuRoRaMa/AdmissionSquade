@@ -16,10 +16,5 @@ class Migration(migrations.Migration):
             model_name='role',
             name='slug',
             field=models.SlugField(default='commander', unique=True),
-        ),
-        migrations.AlterField(
-            model_name='userstudyinfo',
-            name='user',
-            field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='study_info', to=settings.AUTH_USER_MODEL),
-        ),
+        )
     ]

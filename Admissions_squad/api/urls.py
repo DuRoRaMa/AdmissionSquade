@@ -1,11 +1,11 @@
 from django.urls import path
-from accounts.views import UserProfileView, UserListView, UserDetailView, ChangePasswordView, RoleListCreateView, RoleDetailView, UserStudyInfoView, PassportView
+from accounts.views import UserProfileView, UserListView, UserDetailView, ChangePasswordView, RoleListCreateView, RolePermissionCatalogView, RoleDetailView, UserStudyInfoView, PassportView
 from authorizations.views import LoginView, RegistrationView
 from rest_framework_simplejwt.views import TokenRefreshView
 from squads.views import (
     SquadListCreateView, SquadDetailView,
     SquadMembershipListCreateView, SquadMembershipDetailView,
-    MembershipFeeListCreateView, MembershipFeeDetailView
+    MembershipFeeListCreateView, MembershipFeeDetailView,
 )
 from rosters.views import (
     AvailabilityFormListCreateView,
@@ -24,6 +24,7 @@ from rosters.views import (
     RejectChangeRequestView,
     CreateQrTokenView,
     ScanQrView,
+    
 )
 
 urlpatterns = [
@@ -38,8 +39,9 @@ urlpatterns = [
     path('users/', UserListView.as_view(), name='user_list'),
     path('users/<int:pk>/', UserDetailView.as_view(), name='user_detail'),
     path('users/roles/', RoleListCreateView.as_view(), name='role_list_create'),
+    path('users/roles/permission-catalog/', RolePermissionCatalogView.as_view(), name="role_permission_catalog"),
     path('users/roles/<int:pk>/', RoleDetailView.as_view(), name='role_detail'),
-    
+    path("roles/permissions/", RolePermissionCatalogView.as_view(), name="role-permission-catalog"),
     # Отряды
     path('squads/', SquadListCreateView.as_view(), name='squad_list_create'),
     path('squads/<int:pk>/', SquadDetailView.as_view(), name='squad_detail'),

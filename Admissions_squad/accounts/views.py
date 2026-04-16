@@ -1,16 +1,22 @@
-from rest_framework import generics, status
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
-from .models import CustomUser, Role
-from .serializers import (
-    ProfileUserSerializer, UserListSerializer, UserDetailSerializer,
-    UserUpdateSerializer, ChangePasswordSerializer, RoleSerializer,
-    PassportSerializer, UserStudyInfoSerializer
+from rest_framework import generics, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from .models import CustomUser, Passport, Role, UserStudyInfo
+from .permissions import IsAdmin, IsSelfOrAdmin
+from .serializers import (
+    ChangePasswordSerializer,
+    PassportSerializer,
+    ProfileUserSerializer,
+    RoleSerializer,
+    UserDetailSerializer,
+    UserListSerializer,
+    UserStudyInfoSerializer,
+    UserUpdateSerializer,
 )
-from .permissions import IsAdmin, IsSelfOrAdmin, IsAdminOrReadOnly
+
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
@@ -19,81 +25,94 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
 
+
 class UserListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
     serializer_class = UserListSerializer
-    queryset = CustomUser.objects.all().order_by('-date_joined')
-    
-    def get_queryset(self):
-        qs = super().get_queryset()
-        # Фильтрация по параметрам запроса
-        role = self.request.query_params.get('role')
-        if role:
-            # фильтрация по роли (через членства)
-            qs = qs.filter(memberships__role__name=role).distinct()
-        squad = self.request.query_params.get('squad')
-        if squad:
-            qs = qs.filter(memberships__squad__id=squad).distinct()
-        is_blocked = self.request.query_params.get('is_blocked')
-        if is_blocked is not None:
-            qs = qs.filter(is_blocked=is_blocked.lower() == 'true')
-        return qs
+    queryset = CustomUser.objects.all().order_by("-date_joined")
 
-# --- Детали пользователя (админ или сам пользователь) ---
-class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated, IsSelfOrAdmin]
+
+class UserDetailView(generics.RetrieveUpdateAPIView):
     queryset = CustomUser.objects.all()
-    
+
+    def get_permissions(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return [IsAuthenticated(), IsAdmin()]
+        return [IsAuthenticated(), IsSelfOrAdmin()]
+
     def get_serializer_class(self):
-        if self.request.method in ['PUT', 'PATCH']:
+        if self.request.method in ("PUT", "PATCH"):
             return UserUpdateSerializer
         return UserDetailSerializer
-    
-    def delete(self, request, *args, **kwargs):
-        user = self.get_object()
-        # Вместо удаления делаем деактивацию (блокировку)
-        user.is_active = False
-        user.is_blocked = True
-        user.save()
-        return Response(status=status.HTTP_204_NO_CONTENT)
 
-# --- Смена пароля текущего пользователя ---
+
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
-    
-    def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
-        if serializer.is_valid():
-            user = request.user
-            user.set_password(serializer.validated_data['new_password'])
-            user.save()
-            return Response({'detail': 'Пароль успешно изменён.'}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# --- CRUD для ролей (только админ) ---
+    def post(self, request):
+        serializer = ChangePasswordSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+
+        return Response({"detail": "Пароль успешно изменен."}, status=status.HTTP_200_OK)
+
+
+class RolePermissionCatalogView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        return Response(Role.permission_catalog(), status=status.HTTP_200_OK)
+
+
 class RoleListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
-    queryset = Role.objects.all()
     serializer_class = RoleSerializer
+    queryset = Role.objects.select_related("parent").all().order_by("name")
+
 
 class RoleDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
-    queryset = Role.objects.all()
     serializer_class = RoleSerializer
+    queryset = Role.objects.select_related("parent").all()
 
-# Добавить в конец файла
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        if instance.is_system:
+            return Response(
+                {"detail": "Системную роль нельзя удалить."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if instance.children.exists():
+            return Response(
+                {"detail": "Нельзя удалить роль, у которой есть дочерние роли."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if instance.squadmembership_set.filter(is_active=True).exists():
+            return Response(
+                {"detail": "Нельзя удалить роль, которая назначена активным участникам."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return super().destroy(request, *args, **kwargs)
+
 
 class UserStudyInfoView(generics.RetrieveUpdateAPIView):
-    """Просмотр и редактирование учебной информации текущего пользователя"""
     permission_classes = [IsAuthenticated]
-    serializer_class = UserStudyInfoSerializer  # один сериализатор для чтения и записи
+    serializer_class = UserStudyInfoSerializer
 
     def get_object(self):
-        # Возвращаем объект, если он существует, иначе 404
-        return self.request.user.study_info
+        return get_object_or_404(UserStudyInfo, user=self.request.user)
 
     def post(self, request, *args, **kwargs):
-        # Создание новой записи
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(user=request.user)
@@ -101,12 +120,11 @@ class UserStudyInfoView(generics.RetrieveUpdateAPIView):
 
 
 class PassportView(generics.RetrieveUpdateAPIView):
-    """Просмотр и редактирование паспортных данных текущего пользователя"""
     permission_classes = [IsAuthenticated]
-    serializer_class = PassportSerializer  # один сериализатор
+    serializer_class = PassportSerializer
 
     def get_object(self):
-        return self.request.user.passport
+        return get_object_or_404(Passport, user=self.request.user)
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
