@@ -61,24 +61,51 @@ class SquadMembershipListCreateView(generics.ListCreateAPIView):
     pagination_class = StandardResultsSetPagination
 
     def get_permissions(self):
-        if self.request.method == 'POST':
+        if self.request.method == "POST":
             return [IsAuthenticated(), CanManageMembershipCreate()]
-        # GET – список участников отряда (доступ аутентифицированным)
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        squad_id = self.kwargs.get('squad_id')
+        squad_id = self.kwargs.get("squad_id")
         if squad_id:
-            # Показываем только активные членства
-            return SquadMembership.objects.filter(squad_id=squad_id, is_active=True).select_related(
-                'user', 'role', 'squad'
+            return (
+                SquadMembership.objects.filter(squad_id=squad_id, is_active=True)
+                .select_related("user", "role", "squad")
             )
         return SquadMembership.objects.none()
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        squad_id = self.kwargs.get("squad_id")
+        if squad_id:
+            context["squad"] = get_object_or_404(Squad, pk=squad_id)
+        return context
+
     def perform_create(self, serializer):
-        squad_id = self.kwargs.get('squad_id')
-        squad = get_object_or_404(Squad, pk=squad_id)
-        serializer.save(squad=squad)
+        from accounts.permissions import user_has_role_permission
+        from accounts.models import Role
+
+        squad = self.get_serializer_context()["squad"]
+        requested_user = serializer.validated_data.get("user")
+
+        is_manager = (
+            self.request.user.is_staff
+            or user_has_role_permission(self.request.user, "squad.manage", squad=squad)
+            or user_has_role_permission(self.request.user, "membership.manage", squad=squad)
+        )
+
+        if requested_user and requested_user != self.request.user and is_manager:
+            user_to_assign = requested_user
+        else:
+            user_to_assign = self.request.user
+
+        role_to_assign = serializer.validated_data.get("role") or Role.get_or_create_default_member_role()
+
+        serializer.save(
+            squad=squad,
+            user=user_to_assign,
+            role=role_to_assign,
+        )
 
 
 class SquadMembershipDetailView(generics.RetrieveUpdateDestroyAPIView):

@@ -8,6 +8,19 @@ from django.db import models
 from django.utils import timezone
 from phonenumber_field.modelfields import PhoneNumberField
 
+DEFAULT_MEMBER_ROLE_SLUG = "member"
+
+DEFAULT_MEMBER_ROLE_CONFIG = {
+    "name": "Участник",
+    "slug": DEFAULT_MEMBER_ROLE_SLUG,
+    "description": "Базовая роль участника отряда.",
+    "permissions": [
+        "squad.view",
+        "availability.respond_own",
+        "roster.view_own",
+    ],
+    "is_system": True,
+}
 
 GENDER = [
     ("male", "Мужской"),
@@ -251,7 +264,43 @@ class Role(models.Model):
 
     def has_permission(self, permission_code: str) -> bool:
         return permission_code in set(self.get_all_permissions())
+    @classmethod
+    def get_or_create_default_member_role(cls):
+        defaults = {
+            "name": DEFAULT_MEMBER_ROLE_CONFIG["name"],
+            "description": DEFAULT_MEMBER_ROLE_CONFIG["description"],
+            "permissions": DEFAULT_MEMBER_ROLE_CONFIG["permissions"],
+            "is_system": DEFAULT_MEMBER_ROLE_CONFIG["is_system"],
+        }
 
+        role, _ = cls.objects.get_or_create(
+            slug=DEFAULT_MEMBER_ROLE_CONFIG["slug"],
+            defaults=defaults,
+        )
+
+        changed = False
+
+        if role.name != DEFAULT_MEMBER_ROLE_CONFIG["name"]:
+            role.name = DEFAULT_MEMBER_ROLE_CONFIG["name"]
+            changed = True
+
+        if role.description != DEFAULT_MEMBER_ROLE_CONFIG["description"]:
+            role.description = DEFAULT_MEMBER_ROLE_CONFIG["description"]
+            changed = True
+
+        normalized_permissions = sorted(set(DEFAULT_MEMBER_ROLE_CONFIG["permissions"]))
+        if sorted(set(role.permissions or [])) != normalized_permissions:
+            role.permissions = normalized_permissions
+            changed = True
+
+        if role.is_system is not True:
+            role.is_system = True
+            changed = True
+
+        if changed:
+            role.save()
+
+        return role
     def clean(self):
         super().clean()
 

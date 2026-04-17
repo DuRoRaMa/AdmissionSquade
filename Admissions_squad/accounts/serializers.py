@@ -104,6 +104,7 @@ class ProfileUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = (
+            "id",
             "email",
             "username",
             "first_name",
@@ -121,6 +122,7 @@ class ProfileUserSerializer(serializers.ModelSerializer):
             "is_staff",
         )
         read_only_fields = (
+            "id",
             "email",
             "username",
             "is_blocked",
@@ -159,9 +161,28 @@ class ProfileUserSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+class UserListMembershipSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    squad = serializers.IntegerField(source="squad.id")
+    squad_name = serializers.CharField(source="squad.name")
+    role = serializers.IntegerField(source="role.id", allow_null=True)
+    role_name = serializers.CharField(source="role.name", allow_null=True)
+    role_slug = serializers.CharField(source="role.slug", allow_null=True)
+    is_active = serializers.BooleanField()
+    joined_date = serializers.DateTimeField(read_only=True)
+
+
+class UserRoleSummarySerializer(serializers.Serializer):
+    squad_id = serializers.IntegerField()
+    squad_name = serializers.CharField()
+    role_id = serializers.IntegerField(allow_null=True)
+    role_name = serializers.CharField(allow_null=True)
+    role_slug = serializers.CharField(allow_null=True)
 
 class UserListSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    memberships = serializers.SerializerMethodField()
+    role_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -176,11 +197,61 @@ class UserListSerializer(serializers.ModelSerializer):
             "is_blocked",
             "is_staff",
             "date_joined",
+            "memberships",
+            "role_summary",
+        )
+
+    def _get_active_memberships(self, obj):
+        if hasattr(obj, "active_memberships_prefetched"):
+            return obj.active_memberships_prefetched
+
+        return list(
+            obj.memberships.filter(is_active=True)
+            .select_related("role", "squad")
+            .all()
         )
 
     def get_full_name(self, obj):
         return obj.get_full_name()
 
+    def get_memberships(self, obj):
+        memberships = self._get_active_memberships(obj)
+        return UserListMembershipSerializer(memberships, many=True).data
+
+    def get_role_summary(self, obj):
+        if obj.is_staff:
+            return {
+                "kind": "admin",
+                "label": "Администратор",
+                "memberships": [],
+            }
+
+        memberships = self._get_active_memberships(obj)
+
+        summary = []
+        for membership in memberships:
+            summary.append(
+                {
+                    "squad_id": membership.squad.id,
+                    "squad_name": membership.squad.name,
+                    "role_id": membership.role.id if membership.role else None,
+                    "role_name": membership.role.name if membership.role else None,
+                    "role_slug": membership.role.slug if membership.role else None,
+                }
+            )
+
+        label_parts = []
+        for item in summary:
+            if item["role_name"] and item["squad_name"]:
+                label_parts.append(f'{item["role_name"]} ({item["squad_name"]})')
+            elif item["squad_name"]:
+                label_parts.append(f'Без роли ({item["squad_name"]})')
+
+        return {
+            "kind": "membership",
+            "label": ", ".join(label_parts) if label_parts else "Без роли",
+            "memberships": summary,
+        }
 
 class UserDetailSerializer(serializers.ModelSerializer):
     memberships = serializers.SerializerMethodField()

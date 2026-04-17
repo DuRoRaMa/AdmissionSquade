@@ -3,7 +3,8 @@ from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from django.db.models import Prefetch, Q
+from squads.models import SquadMembership
 from .models import CustomUser, Passport, Role, UserStudyInfo
 from .permissions import IsAdmin, IsSelfOrAdmin
 from .serializers import (
@@ -29,7 +30,45 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 class UserListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
     serializer_class = UserListSerializer
-    queryset = CustomUser.objects.all().order_by("-date_joined")
+
+    def get_queryset(self):
+        queryset = (
+            CustomUser.objects.all()
+            .order_by("-date_joined")
+            .prefetch_related(
+                Prefetch(
+                    "memberships",
+                    queryset=SquadMembership.objects.filter(is_active=True).select_related("role", "squad"),
+                    to_attr="active_memberships_prefetched",
+                )
+            )
+        )
+
+        search = (self.request.query_params.get("search") or "").strip()
+        is_blocked = (self.request.query_params.get("is_blocked") or "").strip().lower()
+        role = (self.request.query_params.get("role") or "").strip()
+
+        if search:
+            queryset = queryset.filter(
+                Q(email__icontains=search)
+                | Q(username__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(middle_name__icontains=search)
+            )
+
+        if is_blocked in {"true", "false"}:
+            queryset = queryset.filter(is_blocked=(is_blocked == "true"))
+
+        if role:
+            queryset = queryset.filter(
+                memberships__is_active=True
+            ).filter(
+                Q(memberships__role__name__iexact=role)
+                | Q(memberships__role__slug__iexact=role)
+            ).distinct()
+
+        return queryset
 
 
 class UserDetailView(generics.RetrieveUpdateAPIView):

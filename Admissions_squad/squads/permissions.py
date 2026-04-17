@@ -50,9 +50,15 @@ class CanManageSquad(BasePermission):
 
 
 class CanManageMembershipCreate(BasePermission):
+    """
+    Self-join: разрешён любому аутентифицированному пользователю.
+    Создание membership для другого пользователя: только manager/admin.
+    """
+
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
+
         if request.user.is_staff:
             return True
 
@@ -60,8 +66,17 @@ class CanManageMembershipCreate(BasePermission):
         if not squad_id:
             return False
 
+        target_user_id = request.data.get("user")
+
+        # self-join без специальных ролей
+        if not target_user_id or str(target_user_id) == str(request.user.id):
+            return True
+
         squad = get_object_or_404(Squad, pk=squad_id)
-        return user_has_role_permission(request.user, "membership.create", squad=squad)
+        return (
+            user_has_role_permission(request.user, "squad.manage", squad=squad)
+            or user_has_role_permission(request.user, "membership.manage", squad=squad)
+        )
 
 
 class CanViewMembership(BasePermission):

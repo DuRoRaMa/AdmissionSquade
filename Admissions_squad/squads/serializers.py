@@ -31,32 +31,63 @@ class MembershipFeeSerializer(serializers.ModelSerializer):
 
 
 class SquadMembershipSerializer(serializers.ModelSerializer):
-    role_detail = RoleSerializer(source='role', read_only=True)
-    squad_detail = SquadSerializer(source='squad', read_only=True)
+    role_detail = RoleSerializer(source="role", read_only=True)
+    squad_detail = SquadSerializer(source="squad", read_only=True)
     user_detail = serializers.SerializerMethodField()
     fees = MembershipFeeSerializer(many=True, read_only=True)
 
     class Meta:
         model = SquadMembership
         fields = (
-            'id', 'user', 'user_detail', 'squad', 'squad_detail', 'role', 'role_detail',
-            'ticket_number', 'university', 'joined_date', 'is_active', 'fees'
+            "id",
+            "user",
+            "user_detail",
+            "squad",
+            "squad_detail",
+            "role",
+            "role_detail",
+            "ticket_number",
+            "university",
+            "joined_date",
+            "is_active",
+            "fees",
         )
-        read_only_fields = ('id', 'joined_date', 'user_detail', 'squad_detail', 'role_detail', 'fees')
+        read_only_fields = (
+            "id",
+            "joined_date",
+            "user_detail",
+            "squad_detail",
+            "role_detail",
+            "fees",
+        )
+        extra_kwargs = {
+            "user": {"required": False},
+            "squad": {"required": False},
+            "role": {"required": False},
+        }
 
     def get_user_detail(self, obj):
         return UserListSerializer(obj.user).data if obj.user else None
 
     def validate(self, data):
-        # Проверка уникальности для пары (user, squad) при создании
+        request = self.context.get("request")
+        context_squad = self.context.get("squad")
+
+        user = data.get("user") or getattr(request, "user", None)
+        squad = data.get("squad") or context_squad
+
         if not self.instance:
-            user = data.get('user')
-            squad = data.get('squad')
+            if not user or not getattr(user, "is_authenticated", False):
+                raise serializers.ValidationError("Не удалось определить пользователя.")
+            if not squad:
+                raise serializers.ValidationError("Не удалось определить отряд.")
+
             if SquadMembership.objects.filter(user=user, squad=squad, is_active=True).exists():
-                raise serializers.ValidationError('Пользователь уже состоит в этом отряде.')
-            # Проверка, что пользователь не состоит активным в другом отряде
+                raise serializers.ValidationError("Пользователь уже состоит в этом отряде.")
+
             if SquadMembership.objects.filter(user=user, is_active=True).exclude(squad=squad).exists():
                 raise serializers.ValidationError(
-                    'Пользователь уже состоит в другом отряде. Сначала выйдите из текущего.'
+                    "Пользователь уже состоит в другом отряде. Сначала выйдите из текущего."
                 )
+
         return data
