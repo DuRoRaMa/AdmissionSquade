@@ -17,6 +17,17 @@ def resolve_squad_from_object(obj):
     return None
 
 
+def can_manage_squad_members(user, squad):
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_staff:
+        return True
+    return (
+        user_has_role_permission(user, "squad.manage", squad=squad)
+        or user_has_role_permission(user, "membership.manage", squad=squad)
+    )
+
+
 def can_access_membership(user, membership):
     if not user or not user.is_authenticated:
         return False
@@ -24,7 +35,7 @@ def can_access_membership(user, membership):
         return True
     if membership.user_id == user.id:
         return True
-    return user_has_role_permission(user, "membership.view_all", squad=membership.squad)
+    return can_manage_squad_members(user, membership.squad)
 
 
 class IsAdmin(BasePermission):
@@ -68,21 +79,18 @@ class CanManageMembershipCreate(BasePermission):
 
         target_user_id = request.data.get("user")
 
-        # self-join без специальных ролей
         if not target_user_id or str(target_user_id) == str(request.user.id):
             return True
 
         squad = get_object_or_404(Squad, pk=squad_id)
-        return (
-            user_has_role_permission(request.user, "squad.manage", squad=squad)
-            or user_has_role_permission(request.user, "membership.manage", squad=squad)
-        )
+        return can_manage_squad_members(request.user, squad)
 
 
 class CanViewMembership(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
+
         if request.user.is_staff:
             return True
 
@@ -106,19 +114,14 @@ class CanViewMembership(BasePermission):
 class CanManageMembershipUpdate(BasePermission):
     def has_object_permission(self, request, view, obj):
         squad = resolve_squad_from_object(obj)
-        return bool(
-            squad
-            and (
-                user_has_role_permission(request.user, "membership.update", squad=squad)
-                or user_has_role_permission(request.user, "membership.deactivate", squad=squad)
-            )
-        )
+        return bool(squad and can_manage_squad_members(request.user, squad))
 
 
 class CanManageFees(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
+
         if request.user.is_staff:
             return True
 

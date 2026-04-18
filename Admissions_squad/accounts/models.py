@@ -16,6 +16,7 @@ DEFAULT_MEMBER_ROLE_CONFIG = {
     "description": "Базовая роль участника отряда.",
     "permissions": [
         "squad.view",
+        "fee.view_own",
         "availability.respond_own",
         "roster.view_own",
     ],
@@ -56,12 +57,12 @@ ROLE_PERMISSION_GROUPS = [
             {
                 "code": "squad.view",
                 "name": "Просмотр отрядов",
-                "description": "Просмотр карточек и состава отрядов.",
+                "description": "Просмотр карточек и данных отрядов.",
             },
             {
                 "code": "squad.manage",
                 "name": "Управление отрядом",
-                "description": "Редактирование данных отряда.",
+                "description": "Редактирование и управление отрядом.",
             },
         ],
     },
@@ -70,24 +71,14 @@ ROLE_PERMISSION_GROUPS = [
         "title": "Участники",
         "permissions": [
             {
-                "code": "membership.create",
-                "name": "Добавление участников",
-                "description": "Создание нового членства в отряде.",
+                "code": "membership.join_own",
+                "name": "Вступление в отряд",
+                "description": "Самостоятельное вступление пользователя в отряд.",
             },
             {
-                "code": "membership.view_all",
-                "name": "Просмотр участников",
-                "description": "Просмотр всех участников отряда и их карточек.",
-            },
-            {
-                "code": "membership.update",
-                "name": "Изменение участника",
-                "description": "Изменение роли, билета и других полей членства.",
-            },
-            {
-                "code": "membership.deactivate",
-                "name": "Исключение участника",
-                "description": "Деактивация членства участника.",
+                "code": "membership.manage",
+                "name": "Управление участниками",
+                "description": "Добавление, изменение и исключение участников.",
             },
         ],
     },
@@ -95,6 +86,11 @@ ROLE_PERMISSION_GROUPS = [
         "key": "fees",
         "title": "Взносы",
         "permissions": [
+            {
+                "code": "fee.view_own",
+                "name": "Просмотр своих взносов",
+                "description": "Просмотр собственных взносов участника.",
+            },
             {
                 "code": "fee.manage",
                 "name": "Управление взносами",
@@ -107,45 +103,40 @@ ROLE_PERMISSION_GROUPS = [
         "title": "Доступность",
         "permissions": [
             {
-                "code": "availability.view_all",
-                "name": "Просмотр доступностей",
-                "description": "Просмотр ответов всех участников по доступности.",
+                "code": "availability.respond_own",
+                "name": "Заполнение своей доступности",
+                "description": "Отправка своей формы доступности.",
             },
             {
                 "code": "availability.manage",
-                "name": "Управление формами доступности",
-                "description": "Создание и настройка форм доступности.",
-            },
-            {
-                "code": "availability.respond_own",
-                "name": "Заполнение своей доступности",
-                "description": "Отправка собственной формы доступности.",
+                "name": "Управление доступностью",
+                "description": "Создание и сопровождение форм доступности.",
             },
         ],
     },
     {
         "key": "rosters",
-        "title": "График",
+        "title": "Графики",
         "permissions": [
-            {
-                "code": "roster.view_all",
-                "name": "Просмотр общего графика",
-                "description": "Просмотр полного графика и смен отряда.",
-            },
             {
                 "code": "roster.view_own",
                 "name": "Просмотр своего графика",
-                "description": "Просмотр только своих назначений.",
+                "description": "Просмотр только своих смен.",
+            },
+            {
+                "code": "roster.view_all",
+                "name": "Просмотр общего графика",
+                "description": "Просмотр общего графика отряда.",
             },
             {
                 "code": "roster.manage",
-                "name": "Формирование графика",
-                "description": "Создание и редактирование графика.",
+                "name": "Управление графиками",
+                "description": "Создание и редактирование графиков.",
             },
             {
                 "code": "roster.publish",
-                "name": "Публикация графика",
-                "description": "Публикация итогового варианта графика.",
+                "name": "Публикация графиков",
+                "description": "Публикация итогового графика.",
             },
         ],
     },

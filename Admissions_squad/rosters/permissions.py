@@ -79,7 +79,6 @@ def can_view_availability(user, squad):
         and user.is_authenticated
         and (
             user.is_staff
-            or user_has_role_permission(user, "availability.view_all", squad=squad)
             or user_has_role_permission(user, "availability.manage", squad=squad)
         )
     )

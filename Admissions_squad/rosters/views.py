@@ -55,7 +55,7 @@ class AvailabilityFormListCreateView(generics.ListCreateAPIView):
 
         squad_ids = get_squad_ids_with_permission(
             self.request.user,
-            ["availability.manage", "availability.view_all"],
+            ["availability.manage"],
         )
         return queryset.filter(squad_id__in=squad_ids)
 
