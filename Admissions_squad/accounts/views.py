@@ -112,13 +112,41 @@ class RolePermissionCatalogView(APIView):
 class RoleListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
     serializer_class = RoleSerializer
-    queryset = Role.objects.select_related("parent").all().order_by("name")
+
+    def get_queryset(self):
+        Role.ensure_system_roles()
+        return Role.objects.select_related("parent").all().order_by("name")
 
 
 class RoleDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
     serializer_class = RoleSerializer
-    queryset = Role.objects.select_related("parent").all()
+
+    def get_queryset(self):
+        Role.ensure_system_roles()
+        return Role.objects.select_related("parent").all()
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        if instance.is_system:
+            return Response(
+                {"detail": "Системную роль нельзя редактировать."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        if instance.is_system:
+            return Response(
+                {"detail": "Системную роль нельзя редактировать."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return super().partial_update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

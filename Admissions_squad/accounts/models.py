@@ -8,19 +8,40 @@ from django.db import models
 from django.utils import timezone
 from phonenumber_field.modelfields import PhoneNumberField
 
+SYSTEM_ADMIN_ROLE_SLUG = "administrator"
+BASE_USER_ROLE_SLUG = "base_user"
 DEFAULT_MEMBER_ROLE_SLUG = "member"
+
+SYSTEM_ADMIN_ROLE_CONFIG = {
+    "name": "Администратор",
+    "slug": SYSTEM_ADMIN_ROLE_SLUG,
+    "description": "Системная родительская роль администратора.",
+    "permissions": [],  # полный системный доступ всё равно остаётся через is_staff
+    "is_system": True,
+}
+
+BASE_USER_ROLE_CONFIG = {
+    "name": "Стандартная роль пользователя",
+    "slug": BASE_USER_ROLE_SLUG,
+    "description": "Базовая системная роль авторизованного пользователя.",
+    "permissions": [
+        "squad.view",
+        "membership.join_own",
+    ],
+    "is_system": True,
+}
 
 DEFAULT_MEMBER_ROLE_CONFIG = {
     "name": "Участник",
     "slug": DEFAULT_MEMBER_ROLE_SLUG,
     "description": "Базовая роль участника отряда.",
     "permissions": [
-        "squad.view",
         "fee.view_own",
         "availability.respond_own",
         "roster.view_own",
     ],
     "is_system": True,
+    "parent_slug": BASE_USER_ROLE_SLUG,
 }
 
 GENDER = [
@@ -255,13 +276,83 @@ class Role(models.Model):
 
     def has_permission(self, permission_code: str) -> bool:
         return permission_code in set(self.get_all_permissions())
+    
+    @classmethod
+    def _sync_role_from_config(cls, config: dict, parent=None):
+        defaults = {
+            "name": config["name"],
+            "description": config["description"],
+            "permissions": sorted(set(config.get("permissions") or [])),
+            "is_system": config.get("is_system", False),
+            "parent": parent,
+        }
+
+        role, _ = cls.objects.get_or_create(
+            slug=config["slug"],
+            defaults=defaults,
+        )
+
+        changed = False
+
+        if role.name != config["name"]:
+            role.name = config["name"]
+            changed = True
+
+        if role.description != config["description"]:
+            role.description = config["description"]
+            changed = True
+
+        normalized_permissions = sorted(set(config.get("permissions") or []))
+        if sorted(set(role.permissions or [])) != normalized_permissions:
+            role.permissions = normalized_permissions
+            changed = True
+
+        if role.is_system is not config.get("is_system", False):
+            role.is_system = config.get("is_system", False)
+            changed = True
+
+        if role.parent_id != (parent.id if parent else None):
+            role.parent = parent
+            changed = True
+
+        if changed:
+            role.save()
+
+        return role
+
+    @classmethod
+    def ensure_system_roles(cls):
+        admin_config = {
+            **SYSTEM_ADMIN_ROLE_CONFIG,
+            "permissions": sorted(ROLE_PERMISSION_CODES),
+        }
+
+        admin_role = cls._sync_role_from_config(admin_config)
+        base_user_role = cls._sync_role_from_config(BASE_USER_ROLE_CONFIG)
+        return {
+            "administrator": admin_role,
+            "base_user": base_user_role,
+        }
+
+    @classmethod
+    def get_or_create_base_user_role(cls):
+        return cls.ensure_system_roles()["base_user"]
+
+    @classmethod
+    def get_or_create_administrator_role(cls):
+        return cls.ensure_system_roles()["administrator"]
+    
     @classmethod
     def get_or_create_default_member_role(cls):
+        system_roles = cls.ensure_system_roles()
+        parent_role = system_roles["base_user"]
+
         defaults = {
             "name": DEFAULT_MEMBER_ROLE_CONFIG["name"],
             "description": DEFAULT_MEMBER_ROLE_CONFIG["description"],
             "permissions": DEFAULT_MEMBER_ROLE_CONFIG["permissions"],
             "is_system": DEFAULT_MEMBER_ROLE_CONFIG["is_system"],
+            "parent": parent_role,
         }
 
         role, _ = cls.objects.get_or_create(
@@ -286,6 +377,10 @@ class Role(models.Model):
 
         if role.is_system is not True:
             role.is_system = True
+            changed = True
+
+        if role.parent_id != parent_role.id:
+            role.parent = parent_role
             changed = True
 
         if changed:

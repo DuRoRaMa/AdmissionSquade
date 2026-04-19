@@ -78,6 +78,11 @@ class RoleSerializer(serializers.ModelSerializer):
         if self.instance and value and value.pk == self.instance.pk:
             raise serializers.ValidationError("Роль не может ссылаться сама на себя.")
         return value
+    
+    def validate(self, attrs):
+        if self.instance and self.instance.is_system:
+            raise serializers.ValidationError("Системную роль нельзя редактировать.")
+        return attrs
 
 
 class PassportSerializer(serializers.ModelSerializer):
