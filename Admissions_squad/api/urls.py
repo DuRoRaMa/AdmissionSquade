@@ -8,6 +8,7 @@ from squads.views import (
     MembershipFeeListCreateView, MembershipFeeDetailView,
 )
 from rosters.views import (
+    AvailabilityFormResponsesView,
     AvailabilityFormListCreateView,
     AvailabilityFormOpenView,
     AvailabilityFormCloseView,
@@ -59,6 +60,7 @@ urlpatterns = [
     path('rosters/forms/<int:pk>/open/', AvailabilityFormOpenView.as_view()),
     path('rosters/forms/<int:pk>/close/', AvailabilityFormCloseView.as_view()),
     path('rosters/forms/<int:pk>/submit/', SubmitAvailabilityView.as_view()),
+    path('rosters/forms/<int:pk>/responses/', AvailabilityFormResponsesView.as_view()),
     #График
     path('rosters/schedules/', ScheduleListCreateView.as_view()),
     path('rosters/schedules/<int:pk>/generate/', GenerateScheduleView.as_view()),

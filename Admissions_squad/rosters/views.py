@@ -1,7 +1,7 @@
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
-from rest_framework import generics
+from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -10,12 +10,15 @@ from rest_framework.permissions import IsAuthenticated
 from squads.models import SquadMembership
 from .models import (
     AvailabilityForm,
+    SquadMembership,
     Schedule,
     ScheduleEntry,
     ScheduleChangeRequest,
     QrToken,
+    AvailabilitySlot
 )
 from .serializers import (
+    AvailabilityResponseMemberSerializer,
     AvailabilityFormSerializer,
     AvailabilitySubmitSerializer,
     ScheduleSerializer,
@@ -408,3 +411,88 @@ class ScanQrView(APIView):
             return Response({"detail": str(e)}, status=400)
 
         return Response(result)
+class AvailabilityFormResponsesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        form = get_object_or_404(
+            AvailabilityForm.objects.select_related("squad"),
+            pk=pk,
+        )
+        if not can_manage_availability(request.user, form.squad):
+            raise PermissionDenied("Недостаточно прав для просмотра ответов на форму.")
+
+        memberships = list(
+            SquadMembership.objects.filter(
+                squad=form.squad,
+                is_active=True,
+            )
+            .select_related("user", "role")
+            .order_by("user__last_name", "user__first_name", "user__middle_name")
+        )
+
+        slots = (
+            AvailabilitySlot.objects.filter(
+                shift__day__form=form,
+                membership__in=memberships,
+            )
+            .select_related("membership__user", "membership__role", "shift__day")
+            .order_by("membership_id", "shift__day__date", "shift__starts_at")
+        )
+
+        slots_by_membership = {}
+        for slot in slots:
+            slots_by_membership.setdefault(slot.membership_id, []).append(
+                {
+                    "shift_id": slot.shift_id,
+                    "date": slot.shift.day.date,
+                    "shift_title": slot.shift.title,
+                    "starts_at": slot.shift.starts_at,
+                    "ends_at": slot.shift.ends_at,
+                    "is_available": slot.is_available,
+                    "comment": slot.comment or "",
+                    "submitted_at": slot.submitted_at,
+                }
+            )
+
+        members_payload = []
+        for membership in memberships:
+            user = membership.user
+            member_slots = slots_by_membership.get(membership.id, [])
+
+            submitted_at = None
+            if member_slots:
+                submitted_values = [item["submitted_at"] for item in member_slots if item["submitted_at"]]
+                submitted_at = max(submitted_values) if submitted_values else None
+
+            members_payload.append(
+                {
+                    "membership_id": membership.id,
+                    "user_id": user.id,
+                    "full_name": f"{user.last_name} {user.first_name} {user.middle_name}".strip() or user.email,
+                    "role_name": membership.role.name if membership.role else "",
+                    "has_response": bool(member_slots),
+                    "available_count": sum(1 for item in member_slots if item["is_available"]),
+                    "unavailable_count": sum(1 for item in member_slots if not item["is_available"]),
+                    "submitted_at": submitted_at,
+                    "slots": member_slots,
+                }
+            )
+
+        serializer = AvailabilityResponseMemberSerializer(members_payload, many=True)
+
+        return Response(
+            {
+                "form": {
+                    "id": form.id,
+                    "title": form.title,
+                    "status": form.status,
+                    "squad": form.squad_id,
+                    "period_start": form.period_start,
+                    "period_end": form.period_end,
+                    "response_deadline": form.response_deadline,
+                },
+                "members": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -258,3 +258,25 @@ class QrTokenSerializer(serializers.ModelSerializer):
         model = QrToken
         fields = ("id", "entry", "token", "expires_at", "is_used", "created_at")
         read_only_fields = ("token", "expires_at", "is_used", "created_at")
+
+class AvailabilityResponseItemSerializer(serializers.Serializer):
+    shift_id = serializers.IntegerField()
+    date = serializers.DateField()
+    shift_title = serializers.CharField()
+    starts_at = serializers.TimeField()
+    ends_at = serializers.TimeField()
+    is_available = serializers.BooleanField()
+    comment = serializers.CharField(allow_blank=True, required=False)
+    submitted_at = serializers.DateTimeField(allow_null=True)
+
+
+class AvailabilityResponseMemberSerializer(serializers.Serializer):
+    membership_id = serializers.IntegerField()
+    user_id = serializers.IntegerField()
+    full_name = serializers.CharField()
+    role_name = serializers.CharField(allow_blank=True, required=False)
+    has_response = serializers.BooleanField()
+    available_count = serializers.IntegerField()
+    unavailable_count = serializers.IntegerField()
+    submitted_at = serializers.DateTimeField(allow_null=True)
+    slots = AvailabilityResponseItemSerializer(many=True)
