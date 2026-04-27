@@ -25,6 +25,7 @@ from rosters.views import (
     RejectChangeRequestView,
     CreateQrTokenView,
     ScanQrView,
+    AvailabilityFormResponsesExportView,
     
 )
 
@@ -61,6 +62,7 @@ urlpatterns = [
     path('rosters/forms/<int:pk>/close/', AvailabilityFormCloseView.as_view()),
     path('rosters/forms/<int:pk>/submit/', SubmitAvailabilityView.as_view()),
     path('rosters/forms/<int:pk>/responses/', AvailabilityFormResponsesView.as_view()),
+    path('rosters/forms/<int:pk>/responses/export/', AvailabilityFormResponsesExportView.as_view(), name='availability_form_responses_export',),
     #График
     path('rosters/schedules/', ScheduleListCreateView.as_view()),
     path('rosters/schedules/<int:pk>/generate/', GenerateScheduleView.as_view()),

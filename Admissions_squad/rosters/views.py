@@ -1,3 +1,11 @@
+from io import BytesIO
+from urllib.parse import quote
+from django.http import HttpResponse
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
@@ -496,3 +504,339 @@ class AvailabilityFormResponsesView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+class AvailabilityFormResponsesExportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        form = get_object_or_404(
+            AvailabilityForm.objects
+            .select_related("squad")
+            .prefetch_related("days__shifts"),
+            pk=pk,
+        )
+
+        if not can_manage_availability(request.user, form.squad):
+            raise PermissionDenied("Недостаточно прав для экспорта ответов на форму.")
+
+        memberships = list(
+            SquadMembership.objects
+            .filter(squad=form.squad, is_active=True)
+            .select_related("user", "role")
+            .order_by("user__last_name", "user__first_name", "user__middle_name")
+        )
+
+        shifts = []
+        for day in form.days.all().order_by("date"):
+            for shift in day.shifts.filter(is_active=True).order_by("starts_at", "id"):
+                shifts.append(shift)
+
+        slots = (
+            AvailabilitySlot.objects
+            .filter(
+                shift__day__form=form,
+                membership__in=memberships,
+            )
+            .select_related("membership", "shift", "shift__day")
+        )
+
+        slots_by_key = {
+            (slot.membership_id, slot.shift_id): slot
+            for slot in slots
+        }
+
+        responded_membership_ids = {
+            slot.membership_id
+            for slot in slots
+        }
+
+        wb = Workbook()
+        primary_ws = wb.active
+        primary_ws.title = "Основные смены"
+
+        extra_ws = wb.create_sheet("Доп. смены")
+
+        primary_shifts = [
+            shift for shift in shifts
+            if shift.shift_kind == "primary"
+        ]
+
+        extra_shifts = [
+            shift for shift in shifts
+            if shift.shift_kind == "extra"
+        ]
+
+        self._fill_sheet(
+            ws=primary_ws,
+            form=form,
+            memberships=memberships,
+            shifts=primary_shifts,
+            slots_by_key=slots_by_key,
+            responded_membership_ids=responded_membership_ids,
+            sheet_title="Основные смены",
+        )
+
+        self._fill_sheet(
+            ws=extra_ws,
+            form=form,
+            memberships=memberships,
+            shifts=extra_shifts,
+            slots_by_key=slots_by_key,
+            responded_membership_ids=responded_membership_ids,
+            sheet_title="Дополнительные смены",
+        )
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        safe_title = "".join(
+            char if char.isalnum() or char in (" ", "_", "-") else "_"
+            for char in form.title
+        ).strip()
+
+        filename = f"{safe_title or 'availability_form'}_{form.id}.xlsx"
+
+        response = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(filename)}"
+        )
+
+        return response
+
+    def _fill_sheet(
+        self,
+        ws,
+        form,
+        memberships,
+        shifts,
+        slots_by_key,
+        responded_membership_ids,
+        sheet_title,
+    ):
+        thin = Side(style="thin", color="D9D9D9")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        header_fill = PatternFill("solid", fgColor="F2F2F2")
+        counter_fill = PatternFill("solid", fgColor="EAF2F8")
+
+        center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+        bold = Font(bold=True)
+        normal = Font(bold=False)
+
+        last_col = max(2, len(shifts) + 1)
+
+        ws.merge_cells(start_row=1, start_column=1, end_row=4, end_column=1)
+        fio_cell = ws.cell(row=1, column=1, value="ФИО")
+        fio_cell.font = bold
+        fio_cell.alignment = center
+        fio_cell.fill = header_fill
+
+        self._style_range(ws, 1, 1, 4, 1, border, header_fill, center, bold)
+
+        if shifts:
+            ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=last_col)
+
+            date_title_cell = ws.cell(row=1, column=2, value="Дата")
+            date_title_cell.font = bold
+            date_title_cell.alignment = center
+            date_title_cell.fill = header_fill
+
+            self._style_range(ws, 1, 2, 1, last_col, border, header_fill, center, bold)
+
+            col = 2
+            index = 0
+
+            while index < len(shifts):
+                current_date = shifts[index].day.date
+                same_date_shifts = []
+
+                while (
+                    index + len(same_date_shifts) < len(shifts)
+                    and shifts[index + len(same_date_shifts)].day.date == current_date
+                ):
+                    same_date_shifts.append(shifts[index + len(same_date_shifts)])
+
+                start_col = col
+                end_col = col + len(same_date_shifts) - 1
+
+                if start_col != end_col:
+                    ws.merge_cells(
+                        start_row=2,
+                        start_column=start_col,
+                        end_row=2,
+                        end_column=end_col,
+                    )
+                    ws.merge_cells(
+                        start_row=3,
+                        start_column=start_col,
+                        end_row=3,
+                        end_column=end_col,
+                    )
+
+                date_cell = ws.cell(row=2, column=start_col, value=current_date)
+                date_cell.number_format = "dd.mm.yyyy"
+                date_cell.font = bold
+                date_cell.alignment = center
+                date_cell.fill = header_fill
+
+                available_count = self._count_available_members_for_day(
+                    memberships=memberships,
+                    shifts=same_date_shifts,
+                    slots_by_key=slots_by_key,
+                )
+
+                counter_cell = ws.cell(
+                    row=3,
+                    column=start_col,
+                    value=f"Хочет выйти: {available_count}",
+                )
+                counter_cell.font = bold
+                counter_cell.alignment = center
+                counter_cell.fill = counter_fill
+
+                self._style_range(
+                    ws,
+                    2,
+                    start_col,
+                    2,
+                    end_col,
+                    border,
+                    header_fill,
+                    center,
+                    bold,
+                )
+
+                self._style_range(
+                    ws,
+                    3,
+                    start_col,
+                    3,
+                    end_col,
+                    border,
+                    counter_fill,
+                    center,
+                    bold,
+                )
+
+                for offset, shift in enumerate(same_date_shifts):
+                    shift_title = shift.title or shift.get_shift_kind_display()
+                    starts_at = shift.starts_at.strftime("%H:%M") if shift.starts_at else ""
+                    ends_at = shift.ends_at.strftime("%H:%M") if shift.ends_at else ""
+
+                    title = shift_title
+
+                    if starts_at and ends_at:
+                        title = f"{shift_title}\n{starts_at}–{ends_at}"
+
+                    shift_cell = ws.cell(row=4, column=col + offset, value=title)
+                    shift_cell.font = bold
+                    shift_cell.alignment = center
+                    shift_cell.fill = header_fill
+                    shift_cell.border = border
+
+                col += len(same_date_shifts)
+                index += len(same_date_shifts)
+        else:
+            ws.merge_cells(start_row=1, start_column=2, end_row=4, end_column=2)
+            empty_cell = ws.cell(row=1, column=2, value=f"{sheet_title}: нет активных смен")
+            empty_cell.font = bold
+            empty_cell.alignment = center
+            empty_cell.fill = header_fill
+            self._style_range(ws, 1, 2, 4, 2, border, header_fill, center, bold)
+
+        for row_index, membership in enumerate(memberships, start=5):
+            user = membership.user
+            middle_name = getattr(user, "middle_name", "") or ""
+
+            full_name = (
+                f"{user.last_name} {user.first_name} {middle_name}".strip()
+                or user.email
+            )
+
+            fio_cell = ws.cell(row=row_index, column=1, value=full_name)
+            fio_cell.alignment = left
+            fio_cell.font = normal
+            fio_cell.border = border
+
+            for col_index, shift in enumerate(shifts, start=2):
+                cell = ws.cell(row=row_index, column=col_index)
+
+                slot = slots_by_key.get((membership.id, shift.id))
+
+                if membership.id not in responded_membership_ids:
+                    value = "-"
+                elif slot is None:
+                    value = "-"
+                elif slot.is_available:
+                    value = 1
+                else:
+                    value = 2
+
+                cell.value = value
+                cell.alignment = center
+                cell.border = border
+
+        max_row = max(5, len(memberships) + 4)
+
+        for row in range(1, max_row + 1):
+            for col in range(1, last_col + 1):
+                ws.cell(row=row, column=col).border = border
+
+        ws.column_dimensions["A"].width = 34
+
+        for col in range(2, last_col + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 16
+
+        ws.row_dimensions[1].height = 24
+        ws.row_dimensions[2].height = 24
+        ws.row_dimensions[3].height = 24
+        ws.row_dimensions[4].height = 42
+
+        for row in range(5, max_row + 1):
+            ws.row_dimensions[row].height = 22
+
+        ws.freeze_panes = "B5"
+
+    def _count_available_members_for_day(self, memberships, shifts, slots_by_key):
+        available_members = set()
+
+        shift_ids = [
+            shift.id
+            for shift in shifts
+        ]
+
+        for membership in memberships:
+            for shift_id in shift_ids:
+                slot = slots_by_key.get((membership.id, shift_id))
+
+                if slot and slot.is_available:
+                    available_members.add(membership.id)
+                    break
+
+        return len(available_members)
+
+    def _style_range(
+        self,
+        ws,
+        start_row,
+        start_column,
+        end_row,
+        end_column,
+        border,
+        fill,
+        alignment,
+        font,
+    ):
+        for row in range(start_row, end_row + 1):
+            for col in range(start_column, end_column + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.border = border
+                cell.fill = fill
+                cell.alignment = alignment
+                cell.font = font
