@@ -117,17 +117,33 @@ class AvailabilitySlotSerializer(serializers.ModelSerializer):
 class ScheduleNeedSerializer(serializers.ModelSerializer):
     class Meta:
         model = ScheduleNeed
-        fields = "__all__"
+        fields = (
+            "id",
+            "schedule",
+            "date",
+            "work_block",
+            "starts_at",
+            "ends_at",
+            "required_people",
+        )
+        read_only_fields = ("id", "schedule")
 
 
 class ScheduleSerializer(serializers.ModelSerializer):
     needs = ScheduleNeedSerializer(many=True, required=False)
-
+    has_entries = serializers.SerializerMethodField()
+    entries_count = serializers.SerializerMethodField()
+    availability_form_title = serializers.CharField(
+        source='availability_form.title',
+        read_only=True,
+    )
     class Meta:
         model = Schedule
         fields = (
             "id",
             "squad",
+            "availability_form",
+            "availability_form_title",
             "title",
             "period_start",
             "period_end",
@@ -136,31 +152,80 @@ class ScheduleSerializer(serializers.ModelSerializer):
             "created_by",
             "created_at",
             "needs",
+            "has_entries",
+            "entries_count"
         )
-        read_only_fields = ("created_by", "created_at", "published_at", "status")
+        read_only_fields = ("created_by", "created_at", "published_at", "status","availability_form_title", "period_start", "period_end", "has_entries", "entries_count")
 
+    def get_has_entries(self, obj):
+        if hasattr(obj, "entries_count_value"):
+            return obj.entries_count_value > 0
+        return obj.entries.exists()
+    
+    def get_entries_count(self, obj):
+        if hasattr(obj, "entries_count_value"):
+            return obj.entries_count_value
+
+        return obj.entries.count()
+    
     def validate(self, attrs):
-        period_start = attrs.get("period_start")
-        period_end = attrs.get("period_end")
+        request = self.context.get("request")
+        instance = getattr(self, "instance", None)
+
+        squad = attrs.get("squad") or getattr(instance, "squad", None)
+        availability_form = (
+            attrs.get("availability_form")
+            or getattr(instance, "availability_form", None)
+        )
         needs = attrs.get("needs", [])
 
-        if period_start and period_end and period_end < period_start:
-            raise serializers.ValidationError(
-                "Дата окончания периода графика не может быть раньше даты начала."
-            )
+        if not availability_form:
+            raise serializers.ValidationError({
+                "availability_form": "Выберите форму доступности для графика."
+            })
+
+        if availability_form.status != "closed":
+            raise serializers.ValidationError({
+                "availability_form": "График можно создать только по закрытой форме доступности."
+            })
+
+        if squad and availability_form.squad_id != squad.id:
+            raise serializers.ValidationError({
+                "availability_form": "Форма доступности должна относиться к выбранному отряду."
+            })
 
         for need in needs:
             need_date = need.get("date")
-            if period_start and period_end and need_date and not (period_start <= need_date <= period_end):
-                raise serializers.ValidationError(
-                    f"Потребность на дату {need_date} выходит за пределы периода графика."
+
+            if (
+                need_date
+                and not (
+                    availability_form.period_start
+                    <= need_date
+                    <= availability_form.period_end
                 )
+            ):
+                raise serializers.ValidationError(
+                    f"Потребность на дату {need_date} выходит за пределы периода формы доступности."
+                )
+
+            work_block = need.get("work_block")
+
+            if work_block and squad and work_block.squad_id != squad.id:
+                raise serializers.ValidationError({
+                    "work_block": "Блок потребности должен относиться к выбранному отряду."
+                })
 
         return attrs
 
     def create(self, validated_data):
         needs_data = validated_data.pop("needs", [])
-        schedule = Schedule.objects.create(**validated_data)
+        availability_form = validated_data["availability_form"]
+        schedule = Schedule.objects.create(
+            **validated_data,
+            period_start=availability_form.period_start,
+            period_end=availability_form.period_end
+        )
 
         for need_data in needs_data:
             ScheduleNeed.objects.create(schedule=schedule, **need_data)

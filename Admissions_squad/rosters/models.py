@@ -84,7 +84,14 @@ class Schedule(models.Model):
         ('published', 'Опубликован'),
         ('archived', 'Архив'),
     ]
-
+    availability_form = models.ForeignKey(
+        AvailabilityForm,
+        on_delete=models.PROTECT,
+        related_name='schedules',
+        null=True,
+        blank=True,
+        verbose_name='Форма доступности',
+    )
     squad = models.ForeignKey(Squad, on_delete=models.CASCADE, related_name='schedules')
     title = models.CharField(max_length=255)
     period_start = models.DateField()

@@ -26,7 +26,10 @@ from rosters.views import (
     CreateQrTokenView,
     ScanQrView,
     AvailabilityFormResponsesExportView,
-    
+    WorkBlockListCreateView,
+    ScheduleExportXlsxView,
+    ScheduleEntriesView,
+    ScheduleEditDataView,
 )
 
 urlpatterns = [
@@ -41,9 +44,9 @@ urlpatterns = [
     path('users/', UserListView.as_view(), name='user_list'),
     path('users/<int:pk>/', UserDetailView.as_view(), name='user_detail'),
     path('users/roles/', RoleListCreateView.as_view(), name='role_list_create'),
-    path('users/roles/permission-catalog/', RolePermissionCatalogView.as_view(), name="role_permission_catalog"),
+    path('users/roles/permission-catalog/', RolePermissionCatalogView.as_view(), name='role_permission_catalog'),
     path('users/roles/<int:pk>/', RoleDetailView.as_view(), name='role_detail'),
-    path("roles/permissions/", RolePermissionCatalogView.as_view(), name="role-permission-catalog"),
+    path('roles/permissions/', RolePermissionCatalogView.as_view(), name='role-permission-catalog'),
     # Отряды
     path('squads/', SquadListCreateView.as_view(), name='squad_list_create'),
     path('squads/<int:pk>/', SquadDetailView.as_view(), name='squad_detail'),
@@ -64,10 +67,14 @@ urlpatterns = [
     path('rosters/forms/<int:pk>/responses/', AvailabilityFormResponsesView.as_view()),
     path('rosters/forms/<int:pk>/responses/export/', AvailabilityFormResponsesExportView.as_view(), name='availability_form_responses_export',),
     #График
+    path('rosters/work-blocks/', WorkBlockListCreateView.as_view()),
     path('rosters/schedules/', ScheduleListCreateView.as_view()),
     path('rosters/schedules/<int:pk>/generate/', GenerateScheduleView.as_view()),
     path('rosters/schedules/<int:pk>/publish/', PublishScheduleView.as_view()),
     path('rosters/my-schedule/', MyScheduleView.as_view()),
+    path('rosters/schedules/<int:pk>/entries/', ScheduleEntriesView.as_view(), name='schedule_entries'),
+    path('rosters/schedules/<int:pk>/export/', ScheduleExportXlsxView.as_view(), name='schedule_export_xlsx'),
+    path("rosters/schedules/<int:pk>/edit-data/", ScheduleEditDataView.as_view()),
     #Изменение графика
     path('rosters/change-requests/', ChangeRequestListView.as_view()),
     path('rosters/change-requests/create/', ChangeRequestCreateView.as_view()),
