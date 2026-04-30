@@ -38,12 +38,13 @@ class AvailabilityFormDaySerializer(serializers.ModelSerializer):
 
 class AvailabilityFormSerializer(serializers.ModelSerializer):
     days = AvailabilityFormDaySerializer(many=True)
-
+    squad_name = serializers.CharField(source='squad.name', read_only=True)
     class Meta:
         model = AvailabilityForm
         fields = (
             "id",
             "squad",
+            "squad_name",
             "title",
             "period_start",
             "period_end",

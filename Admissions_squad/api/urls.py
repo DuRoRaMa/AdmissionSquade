@@ -30,6 +30,10 @@ from rosters.views import (
     ScheduleExportXlsxView,
     ScheduleEntriesView,
     ScheduleEditDataView,
+    WorkBlockDetailView,
+    ScheduleDetailView,
+    ScheduleNeedsUpdateView,
+    ScheduleAssignmentsUpdateView
 )
 
 urlpatterns = [
@@ -60,6 +64,10 @@ urlpatterns = [
     path('squads/fees/<int:pk>/', MembershipFeeDetailView.as_view(), name='membership_fee_detail'),
     #Форма
     path('rosters/forms/', AvailabilityFormListCreateView.as_view()),
+    path('rosters/work-blocks/<int:pk>/', WorkBlockDetailView.as_view(), name='work_block_detail'),
+    path('rosters/schedules/<int:pk>/', ScheduleDetailView.as_view(), name='schedule_detail'),
+    path('rosters/schedules/<int:pk>/needs/', ScheduleNeedsUpdateView.as_view(), name='schedule_needs_update'),
+    path('rosters/schedules/<int:pk>/assignments/', ScheduleAssignmentsUpdateView.as_view(), name='schedule_assignments_update'),
     path('rosters/forms/active/', ActiveAvailabilityFormView.as_view()),
     path('rosters/forms/<int:pk>/open/', AvailabilityFormOpenView.as_view()),
     path('rosters/forms/<int:pk>/close/', AvailabilityFormCloseView.as_view()),

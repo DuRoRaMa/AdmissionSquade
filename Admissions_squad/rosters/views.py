@@ -3,7 +3,8 @@ from urllib.parse import quote
 from django.http import HttpResponse
 from django.db.models import Count
 from collections import defaultdict
-from datetime import date, timedelta
+from django.db import transaction
+from datetime import date, timedelta, time
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -19,15 +20,17 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from squads.models import SquadMembership
+from squads.serializers import SquadMembershipSerializer
 from .models import (
     AvailabilityForm,
     WorkBlock,
-    SquadMembership,
     Schedule,
+    ScheduleNeed,
     ScheduleEntry,
     ScheduleChangeRequest,
     QrToken,
-    AvailabilitySlot
+    AvailabilitySlot,
+    AvailabilityFormShift
 )
 from .serializers import (
     AvailabilityResponseMemberSerializer,
@@ -37,6 +40,7 @@ from .serializers import (
     ScheduleEntrySerializer,
     ScheduleChangeRequestSerializer,
     WorkBlockSerializer,
+    ScheduleNeedSerializer,
 )
 from .permissions import (
     can_manage_availability,
@@ -116,10 +120,16 @@ class WorkBlockListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        queryset = WorkBlock.objects.filter(is_active=True).select_related("squad")
+        include_inactive = str(
+            self.request.query_params.get("include_inactive", "")
+        ).lower() in {"1", "true", "yes", "on"}
+
+        queryset = WorkBlock.objects.select_related("squad")
+
+        if not include_inactive:
+            queryset = queryset.filter(is_active=True)
 
         squad_id = self.request.query_params.get("squad")
-
         if squad_id:
             queryset = queryset.filter(squad_id=squad_id)
 
@@ -130,15 +140,35 @@ class WorkBlockListCreateView(generics.ListCreateAPIView):
             self.request.user,
             ["roster.view_all", "roster.manage", "roster.publish"],
         )
-
         return queryset.filter(squad_id__in=squad_ids)
 
     def perform_create(self, serializer):
         squad = serializer.validated_data["squad"]
-
         if not can_manage_roster(self.request.user, squad):
             raise PermissionDenied("Недостаточно прав для создания блока работ.")
+        serializer.save()
 
+class WorkBlockDetailView(generics.RetrieveUpdateAPIView):
+    serializer_class = WorkBlockSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        queryset = WorkBlock.objects.select_related("squad")
+
+        if self.request.user.is_staff:
+            return queryset
+
+        squad_ids = get_squad_ids_with_permission(
+            self.request.user,
+            ["roster.manage"],
+        )
+        return queryset.filter(squad_id__in=squad_ids)
+
+    def perform_update(self, serializer):
+        squad = serializer.instance.squad
+        if not can_manage_roster(self.request.user, squad):
+            raise PermissionDenied("Недостаточно прав для изменения блока работ.")
         serializer.save()
 
 class ActiveAvailabilityFormView(APIView):
@@ -244,6 +274,291 @@ class ScheduleListCreateView(generics.ListCreateAPIView):
 
         serializer.save(created_by=self.request.user)
 
+class ScheduleDetailView(generics.RetrieveDestroyAPIView):
+    serializer_class = ScheduleSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = (
+            Schedule.objects
+            .select_related("squad", "availability_form", "created_by")
+            .prefetch_related("needs", "needs__work_block")
+            .annotate(entries_count_value=Count("entries"))
+        )
+
+        if self.request.user.is_staff:
+            return queryset
+
+        squad_ids = get_squad_ids_with_permission(
+            self.request.user,
+            ["roster.view_all", "roster.manage", "roster.publish"],
+        )
+        return queryset.filter(squad_id__in=squad_ids)
+
+    def perform_destroy(self, instance):
+        if not can_manage_roster(self.request.user, instance.squad):
+            raise PermissionDenied("Недостаточно прав для удаления графика.")
+        instance.delete()
+
+
+PRIMARY_SHIFT = "primary"
+EXTRA_SHIFT = "extra"
+SHIFT_TIME_BY_KIND = {
+    PRIMARY_SHIFT: (time(9, 0), time(18, 0)),
+    EXTRA_SHIFT: (time(18, 0), time(21, 0)),
+}
+
+
+def _parse_date_value(value):
+    if isinstance(value, date):
+        return value
+
+    if not value:
+        raise ValidationError({"date": "Дата обязательна."})
+
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValidationError({"date": "Дата должна быть в формате YYYY-MM-DD."}) from exc
+
+
+def _get_schedule_for_edit(schedule_id, user):
+    schedule = get_object_or_404(
+        Schedule.objects.select_related("squad", "availability_form"),
+        pk=schedule_id,
+    )
+
+    if not can_manage_roster(user, schedule.squad):
+        raise PermissionDenied("Недостаточно прав для редактирования графика.")
+
+    if schedule.status != "draft":
+        raise ValidationError("Редактировать можно только черновик графика.")
+
+    return schedule
+
+
+def _validate_schedule_date(schedule, target_date):
+    if target_date < schedule.period_start or target_date > schedule.period_end:
+        raise ValidationError({
+            "date": "Дата выходит за пределы периода графика."
+        })
+
+
+def _get_shift_time(schedule, target_date, shift_kind):
+    if shift_kind not in SHIFT_TIME_BY_KIND:
+        raise ValidationError({"shift_kind": "Неизвестный тип смены."})
+
+    if schedule.availability_form_id:
+        form_shift = (
+            AvailabilityFormShift.objects
+            .filter(
+                day__form_id=schedule.availability_form_id,
+                day__date=target_date,
+                shift_kind=shift_kind,
+                is_active=True,
+            )
+            .first()
+        )
+
+        if form_shift and form_shift.starts_at and form_shift.ends_at:
+            return form_shift.starts_at, form_shift.ends_at
+
+    return SHIFT_TIME_BY_KIND[shift_kind]
+
+
+def _get_work_block(schedule, work_block_id):
+    if not work_block_id:
+        raise ValidationError({"work_block": "Выберите блок работ."})
+
+    work_block = get_object_or_404(
+        WorkBlock,
+        pk=work_block_id,
+        squad=schedule.squad,
+    )
+
+    if not work_block.is_active:
+        raise ValidationError({
+            "work_block": f"Блок работ “{work_block.code}” деактивирован."
+        })
+
+    return work_block
+
+
+def _selected_shift_kinds(row):
+    selected = []
+
+    if row.get("primary"):
+        selected.append(PRIMARY_SHIFT)
+
+    if row.get("extra"):
+        selected.append(EXTRA_SHIFT)
+
+    return selected
+
+class ScheduleNeedsUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        schedule = _get_schedule_for_edit(pk, request.user)
+        target_date = _parse_date_value(request.data.get("date"))
+        _validate_schedule_date(schedule, target_date)
+
+        needs_data = request.data.get("needs", [])
+        if not isinstance(needs_data, list):
+            raise ValidationError({"needs": "Потребности должны быть списком."})
+
+        normalized_needs = []
+        used_keys = set()
+
+        for index, row in enumerate(needs_data):
+            if not isinstance(row, dict):
+                raise ValidationError({"needs": f"Строка {index + 1} заполнена некорректно."})
+
+            work_block = _get_work_block(schedule, row.get("work_block"))
+            required_people = int(row.get("required_people") or 0)
+
+            if required_people < 1:
+                raise ValidationError({
+                    "required_people": "Количество людей должно быть больше 0."
+                })
+
+            shift_kinds = _selected_shift_kinds(row)
+            if not shift_kinds:
+                raise ValidationError({
+                    "shift_kind": "Выберите основную или дополнительную смену."
+                })
+
+            for shift_kind in shift_kinds:
+                starts_at, ends_at = _get_shift_time(schedule, target_date, shift_kind)
+                key = (work_block.id, starts_at, ends_at)
+
+                if key in used_keys:
+                    raise ValidationError({
+                        "needs": "Нельзя дважды указать один блок работ для одной смены."
+                    })
+
+                used_keys.add(key)
+                normalized_needs.append({
+                    "work_block": work_block,
+                    "starts_at": starts_at,
+                    "ends_at": ends_at,
+                    "required_people": required_people,
+                })
+
+        ScheduleNeed.objects.filter(schedule=schedule, date=target_date).delete()
+
+        created_needs = [
+            ScheduleNeed.objects.create(
+                schedule=schedule,
+                date=target_date,
+                work_block=item["work_block"],
+                starts_at=item["starts_at"],
+                ends_at=item["ends_at"],
+                required_people=item["required_people"],
+            )
+            for item in normalized_needs
+        ]
+
+        serializer = ScheduleNeedSerializer(created_needs, many=True)
+        return Response({
+            "message": "Потребности сохранены.",
+            "date": target_date.isoformat(),
+            "needs": serializer.data,
+        })
+
+class ScheduleAssignmentsUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        schedule = _get_schedule_for_edit(pk, request.user)
+        target_date = _parse_date_value(request.data.get("date"))
+        _validate_schedule_date(schedule, target_date)
+
+        assignments = request.data.get("assignments", [])
+        if not isinstance(assignments, list):
+            raise ValidationError({"assignments": "Назначения должны быть списком."})
+
+        normalized_entries = []
+        used_keys = set()
+
+        for index, row in enumerate(assignments):
+            if not isinstance(row, dict):
+                raise ValidationError({
+                    "assignments": f"Строка {index + 1} заполнена некорректно."
+                })
+
+            shift_kinds = _selected_shift_kinds(row)
+            if not shift_kinds:
+                continue
+
+            membership_id = row.get("membership") or row.get("membership_id")
+            if not membership_id:
+                raise ValidationError({"membership": "Участник обязателен."})
+
+            membership = get_object_or_404(
+                SquadMembership.objects.select_related("user", "squad"),
+                pk=membership_id,
+                squad=schedule.squad,
+                is_active=True,
+            )
+
+            work_block = _get_work_block(schedule, row.get("work_block"))
+
+            for shift_kind in shift_kinds:
+                starts_at, ends_at = _get_shift_time(schedule, target_date, shift_kind)
+                key = (membership.id, starts_at, ends_at)
+
+                if key in used_keys:
+                    raise ValidationError({
+                        "assignments": "Один участник не может быть назначен на одну смену дважды."
+                    })
+
+                used_keys.add(key)
+
+                need = (
+                    ScheduleNeed.objects
+                    .filter(
+                        schedule=schedule,
+                        date=target_date,
+                        work_block=work_block,
+                        starts_at=starts_at,
+                        ends_at=ends_at,
+                    )
+                    .first()
+                )
+
+                normalized_entries.append({
+                    "membership": membership,
+                    "work_block": work_block,
+                    "need": need,
+                    "starts_at": starts_at,
+                    "ends_at": ends_at,
+                })
+
+        ScheduleEntry.objects.filter(schedule=schedule, date=target_date).delete()
+
+        created_entries = [
+            ScheduleEntry.objects.create(
+                schedule=schedule,
+                date=target_date,
+                membership=item["membership"],
+                work_block=item["work_block"],
+                need=item["need"],
+                starts_at=item["starts_at"],
+                ends_at=item["ends_at"],
+                status="planned",
+            )
+            for item in normalized_entries
+        ]
+
+        serializer = ScheduleEntrySerializer(created_entries, many=True)
+        return Response({
+            "message": "Назначения сохранены.",
+            "date": target_date.isoformat(),
+            "entries": serializer.data,
+        })
 
 class GenerateScheduleView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1402,7 +1717,20 @@ class ScheduleEditDataView(APIView):
         selected_date = self.get_selected_date(request, schedule)
 
         days = self.get_schedule_days(schedule)
-
+        members = (
+            SquadMembership.objects
+            .select_related("user", "squad")
+            .filter(
+                squad=schedule.squad,
+                is_active=True,
+            )
+            .order_by(
+                "user__last_name",
+                "user__first_name",
+                "user__email",
+                "id",
+            )
+        )
         needs = (
             schedule.needs
             .filter(date=selected_date)
@@ -1431,7 +1759,8 @@ class ScheduleEditDataView(APIView):
 
         for entry in entries:
             entries_by_need.setdefault(entry.need_id, []).append(entry)
-
+        
+        members_data = SquadMembershipSerializer(members, many=True).data
         response_needs = []
 
         for need in needs:
@@ -1439,14 +1768,15 @@ class ScheduleEditDataView(APIView):
 
             response_needs.append({
                 "id": need.id,
-                "date": need.date,
+                "date": need.date.isoformat() if need.date else None,
                 "work_block": need.work_block_id,
                 "work_block_name": need.work_block.name if need.work_block else "",
-                "starts_at": need.starts_at,
-                "ends_at": need.ends_at,
+                "starts_at": need.starts_at.strftime("%H:%M:%S") if need.starts_at else None,
+                "ends_at": need.ends_at.strftime("%H:%M:%S") if need.ends_at else None,
                 "required_people": need.required_people,
                 "assigned_count": len(assigned_entries),
                 "shortage": max(need.required_people - len(assigned_entries), 0),
+                "members": members_data,
                 "entries": [
                     self.serialize_entry(entry)
                     for entry in assigned_entries
@@ -1462,11 +1792,11 @@ class ScheduleEditDataView(APIView):
                 "squad": schedule.squad_id,
                 "squad_name": schedule.squad.name,
                 "availability_form": schedule.availability_form_id,
-                "period_start": schedule.period_start,
-                "period_end": schedule.period_end,
+                "period_start": schedule.period_start.isoformat() if schedule.period_start else None,
+                "period_end": schedule.period_end.isoformat() if schedule.period_end else None,
             },
-            "days": days,
-            "selected_date": selected_date,
+            "days": [item.isoformat() for item in days],
+            "selected_date": selected_date.isoformat(),
             "needs": response_needs,
         })
 
@@ -1507,9 +1837,9 @@ class ScheduleEditDataView(APIView):
             "member_name": self.get_member_name(entry.membership),
             "work_block": entry.work_block_id,
             "work_block_name": entry.work_block.name if entry.work_block else "",
-            "date": entry.date,
-            "starts_at": entry.starts_at,
-            "ends_at": entry.ends_at,
+            "date": entry.date.isoformat() if entry.date else None,
+            "starts_at": entry.starts_at.strftime("%H:%M:%S") if entry.starts_at else None,
+            "ends_at": entry.ends_at.strftime("%H:%M:%S") if entry.ends_at else None,
             "status": entry.status,
         }
 

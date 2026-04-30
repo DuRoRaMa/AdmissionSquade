@@ -1,6 +1,6 @@
 from django.db import transaction
 
-from rosters.models import ScheduleEntry, AvailabilitySlot
+from rosters.models import AvailabilitySlot, ScheduleEntry
 
 
 def intervals_intersect(start_a, end_a, start_b, end_b):
@@ -21,7 +21,7 @@ def generate_schedule(schedule):
         schedule.needs
         .select_related("work_block")
         .all()
-        .order_by("date", "starts_at")
+        .order_by("date", "starts_at", "work_block__name", "id")
     )
 
     for need in needs:
@@ -37,7 +37,7 @@ def generate_schedule(schedule):
                 membership__squad=schedule.squad,
             )
             .select_related("membership", "shift")
-            .order_by("membership_id")
+            .order_by("membership__user__last_name", "membership__user__first_name", "membership_id")
         )
 
         count = 0
@@ -45,16 +45,17 @@ def generate_schedule(schedule):
         for slot in candidates:
             membership = slot.membership
 
-            already_busy = ScheduleEntry.objects.filter(
+            # На один день участника назначаем только один раз.
+            # Это важнее проверки пересечения времени: основная и дополнительная смены
+            # не пересекаются, но в графике один человек не должен закрывать две потребности дня.
+            already_assigned_today = ScheduleEntry.objects.filter(
                 schedule=schedule,
                 membership=membership,
                 date=need.date,
                 status="planned",
-                starts_at__lt=need.ends_at,
-                ends_at__gt=need.starts_at,
             ).exists()
 
-            if already_busy:
+            if already_assigned_today:
                 continue
 
             ScheduleEntry.objects.create(
