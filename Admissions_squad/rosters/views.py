@@ -652,6 +652,15 @@ class MyScheduleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if request.user.is_staff:
+            queryset = (
+                ScheduleEntry.objects
+                .filter(schedule__status="published")
+                .select_related("work_block", "schedule", "membership__user", "membership__squad")
+            )
+            serializer = ScheduleEntrySerializer(queryset, many=True)
+            return Response(serializer.data)
+
         allowed_membership_ids = [
             membership.id
             for membership in get_user_active_memberships(request.user)
@@ -667,24 +676,12 @@ class MyScheduleView(APIView):
                 membership_id__in=allowed_membership_ids,
                 schedule__status="published",
             )
-            .select_related(
-                "work_block",
-                "schedule",
-                "schedule__squad",
-                "membership",
-                "membership__user",
-                "membership__squad",
-                "membership__role",
-            )
-            .order_by(
-                "date",
-                "starts_at",
-                "work_block__name",
-            )
+            .select_related("work_block", "schedule", "membership__user", "membership__squad")
         )
 
         serializer = ScheduleEntrySerializer(entries, many=True)
         return Response(serializer.data)
+
 
 class ChangeRequestCreateView(generics.CreateAPIView):
     serializer_class = ScheduleChangeRequestSerializer
