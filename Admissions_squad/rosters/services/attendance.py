@@ -6,11 +6,17 @@ from rosters.models import QrToken, ScheduleRecord
 
 
 def create_qr_token(entry):
+    QrToken.objects.filter(
+        entry=entry,
+        is_used=False,
+        expires_at__gt=timezone.now(),
+    ).update(is_used=True)
+
     return QrToken.objects.create(
         entry=entry,
         token=secrets.token_urlsafe(32),
         expires_at=timezone.now() + timedelta(minutes=3),
-        is_used=False
+        is_used=False,
     )
 
 
@@ -25,6 +31,8 @@ def scan_qr(token_value, scanned_by):
 
     if not token:
         raise ValueError('QR-токен не найден.')
+    if token.is_used:
+        raise ValueError('QR-токен уже использован или заменён новым.')
 
     if token.is_expired():
         raise ValueError('Срок действия QR-кода истёк.')
