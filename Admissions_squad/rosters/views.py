@@ -5,7 +5,8 @@ from django.db.models import Count
 from collections import defaultdict
 from django.db import transaction
 from datetime import date, timedelta, time
-
+from django.utils.dateparse import parse_date
+from rosters.services.attendance_status import close_past_schedule_entries
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -30,7 +31,8 @@ from .models import (
     ScheduleChangeRequest,
     QrToken,
     AvailabilitySlot,
-    AvailabilityFormShift
+    AvailabilityFormShift,
+    AttendanceActionLog,
 )
 from .serializers import (
     AvailabilityResponseMemberSerializer,
@@ -41,6 +43,8 @@ from .serializers import (
     ScheduleChangeRequestSerializer,
     WorkBlockSerializer,
     ScheduleNeedSerializer,
+    AttendanceActionLogSerializer,
+    AttendanceEntrySerializer
 )
 from .permissions import (
     can_manage_availability,
@@ -55,7 +59,7 @@ from .permissions import (
 from .services.availability import submit_availability
 from .services.generator import generate_schedule
 from .services.changes import approve_change_request, reject_change_request
-from .services.attendance import create_qr_token, scan_qr
+from rosters.services.attendance import create_qr_token, scan_qr, QrNotAvailableError, manual_mark_attendance
 
 
 class AvailabilityFormListCreateView(generics.ListCreateAPIView):
@@ -598,6 +602,7 @@ class ScheduleEntriesView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        close_past_schedule_entries()
         schedule = get_object_or_404(
             Schedule.objects.select_related("squad"),
             pk=self.kwargs["pk"],
@@ -652,6 +657,7 @@ class MyScheduleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        close_past_schedule_entries()
         if request.user.is_staff:
             queryset = (
                 ScheduleEntry.objects
@@ -783,21 +789,52 @@ class CreateQrTokenView(APIView):
 
     def post(self, request, entry_id):
         entry = get_object_or_404(
-            ScheduleEntry.objects.select_related("membership__user"),
+            ScheduleEntry.objects.select_related(
+                "membership",
+                "membership__user",
+                "schedule",
+                "schedule__squad",
+            ),
             pk=entry_id,
         )
 
-        if entry.membership.user_id != request.user.id and not request.user.is_staff:
-            return Response({"detail": "Это не ваша смена."}, status=403)
+        if entry.membership.user_id != request.user.id and not can_manage_roster(
+            request.user,
+            entry.schedule.squad,
+        ):
+            return Response(
+                {"detail": "Это не ваша смена."},
+                status=403,
+            )
 
-        token = create_qr_token(entry)
+        try:
+            token = create_qr_token(entry)
+        except QrNotAvailableError as error:
+            return Response(
+                {
+                    "detail": str(error),
+                    "status": "waiting",
+                    "available_at": error.available_at,
+                    "seconds_left": error.seconds_left,
+                },
+                status=409,
+            )
+        except ValueError as error:
+            return Response(
+                {"detail": str(error)},
+                status=400,
+            )
+
         return Response(
             {
-                "message": "QR-токен создан",
+                "message": "QR-токен создан.",
                 "token": token.token,
+                "action": token.action,
+                "action_label": token.get_action_display(),
                 "expires_at": token.expires_at,
-            }
+            },
         )
+
 
 
 class ScanQrView(APIView):
@@ -805,11 +842,19 @@ class ScanQrView(APIView):
 
     def post(self, request):
         token_value = request.data.get("token")
+
         if not token_value:
-            return Response({"detail": "Токен обязателен."}, status=400)
+            return Response(
+                {"detail": "Токен обязателен."},
+                status=400,
+            )
 
         token = get_object_or_404(
-            QrToken.objects.select_related("entry__schedule__squad"),
+            QrToken.objects.select_related(
+                "entry",
+                "entry__schedule",
+                "entry__schedule__squad",
+            ),
             token=token_value,
         )
 
@@ -818,10 +863,59 @@ class ScanQrView(APIView):
 
         try:
             result = scan_qr(token_value, request.user)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=400)
+        except QrNotAvailableError as error:
+            return Response(
+                {
+                    "detail": str(error),
+                    "status": "waiting",
+                    "available_at": error.available_at,
+                    "seconds_left": error.seconds_left,
+                },
+                status=409,
+            )
+        except ValueError as error:
+            return Response(
+                {"detail": str(error)},
+                status=400,
+            )
 
         return Response(result)
+
+class AttendanceActionLogListView(generics.ListAPIView):
+    serializer_class = AttendanceActionLogSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = (
+            AttendanceActionLog.objects
+            .select_related(
+                "entry",
+                "entry__schedule",
+                "entry__schedule__squad",
+                "entry__membership",
+                "entry__membership__user",
+                "entry__work_block",
+                "scanned_by",
+            )
+            .order_by("-created_at")
+        )
+
+        squad_id = self.request.query_params.get("squad")
+
+        if self.request.user.is_staff:
+            if squad_id:
+                queryset = queryset.filter(entry__schedule__squad_id=squad_id)
+
+            return queryset[:100]
+
+        squad_ids = get_squad_ids_with_permission(self.request.user, "roster.manage")
+
+        queryset = queryset.filter(entry__schedule__squad_id__in=squad_ids)
+
+        if squad_id:
+            queryset = queryset.filter(entry__schedule__squad_id=squad_id)
+
+        return queryset[:100]
 class AvailabilityFormResponsesView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1921,3 +2015,102 @@ class ScheduleEditDataView(APIView):
         full_name = " ".join(part for part in parts if part).strip()
 
         return full_name or user.email or str(user)
+
+class AttendanceEntryListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        close_past_schedule_entries()
+        date_value = parse_date(request.query_params.get("date", "")) or timezone.localdate()
+        squad_id = request.query_params.get("squad")
+
+        queryset = (
+            ScheduleEntry.objects
+            .filter(date=date_value)
+            .select_related(
+                "schedule",
+                "schedule__squad",
+                "membership",
+                "membership__user",
+                "work_block",
+            )
+            .order_by(
+                "work_block__name",
+                "membership__user__last_name",
+                "membership__user__first_name",
+            )
+        )
+
+        if squad_id:
+            queryset = queryset.filter(schedule__squad_id=squad_id)
+
+        if not request.user.is_staff:
+            squad_ids = get_squad_ids_with_permission(request.user, "roster.manage")
+            queryset = queryset.filter(schedule__squad_id__in=squad_ids)
+
+        serializer = AttendanceEntrySerializer(queryset, many=True)
+
+        return Response(
+            {
+                "date": date_value,
+                "entries": serializer.data,
+            },
+        )
+
+class ManualCheckInView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, entry_id):
+        entry = get_object_or_404(
+            ScheduleEntry.objects.select_related(
+                "schedule",
+                "schedule__squad",
+            ),
+            pk=entry_id,
+        )
+
+        if not can_manage_roster(request.user, entry.schedule.squad):
+            raise PermissionDenied("Недостаточно прав для ручной отметки прихода.")
+
+        try:
+            result = manual_mark_attendance(
+                entry=entry,
+                marked_by=request.user,
+                action=QrToken.ACTION_CHECK_IN,
+            )
+        except ValueError as error:
+            return Response(
+                {"detail": str(error)},
+                status=400,
+            )
+
+        return Response(result)
+
+class ManualCheckOutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, entry_id):
+        entry = get_object_or_404(
+            ScheduleEntry.objects.select_related(
+                "schedule",
+                "schedule__squad",
+            ),
+            pk=entry_id,
+        )
+
+        if not can_manage_roster(request.user, entry.schedule.squad):
+            raise PermissionDenied("Недостаточно прав для ручной отметки ухода.")
+
+        try:
+            result = manual_mark_attendance(
+                entry=entry,
+                marked_by=request.user,
+                action=QrToken.ACTION_CHECK_OUT,
+            )
+        except ValueError as error:
+            return Response(
+                {"detail": str(error)},
+                status=400,
+            )
+
+        return Response(result)

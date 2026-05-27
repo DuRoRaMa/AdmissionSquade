@@ -13,8 +13,12 @@ from .models import (
     ScheduleChangeRequest,
     ScheduleRecord,
     QrToken,
+    AttendanceActionLog
 )
-
+from rosters.services.attendance_status import (
+    get_entry_attendance_status,
+    get_entry_record,
+)
 
 class WorkBlockSerializer(serializers.ModelSerializer):
     class Meta:
@@ -233,8 +237,42 @@ class ScheduleSerializer(serializers.ModelSerializer):
 
         return schedule
 
+class AttendanceFieldsMixin(serializers.Serializer):
+    checked_in_at = serializers.SerializerMethodField()
+    checked_out_at = serializers.SerializerMethodField()
+    attendance_status = serializers.SerializerMethodField()
+    attendance_status_label = serializers.SerializerMethodField()
+    status_label = serializers.SerializerMethodField()
 
-class ScheduleEntrySerializer(serializers.ModelSerializer):
+    def _get_record(self, obj):
+        try:
+            return obj.record
+        except ScheduleRecord.DoesNotExist:
+            return None
+
+    def get_checked_in_at(self, obj):
+        record = self._get_record(obj)
+        return record.checked_in_at if record else None
+
+    def get_checked_out_at(self, obj):
+        record = self._get_record(obj)
+        return record.checked_out_at if record else None
+
+    def get_attendance_status(self, obj):
+        record = self._get_record(obj)
+        return get_entry_attendance_status(obj, record)
+
+    def get_attendance_status_label(self, obj):
+        status = self.get_attendance_status(obj)
+        labels = dict(ScheduleEntry.STATUS_CHOICES)
+        return labels.get(status, status)
+
+    def get_status_label(self, obj):
+        status = getattr(obj, "status", None)
+        labels = dict(ScheduleEntry.STATUS_CHOICES)
+        return labels.get(status, status)
+
+class ScheduleEntrySerializer(AttendanceFieldsMixin, serializers.ModelSerializer):
     member_name = serializers.SerializerMethodField()
     work_block_name = serializers.CharField(source="work_block.name", read_only=True)
     work_block_code = serializers.CharField(source="work_block.code", read_only=True)
@@ -254,6 +292,10 @@ class ScheduleEntrySerializer(serializers.ModelSerializer):
             "starts_at",
             "ends_at",
             "status",
+            "checked_in_at",
+            "checked_out_at",
+            "attendance_status",
+            "attendance_status_label",
         )
 
     def get_member_name(self, obj):
@@ -346,3 +388,93 @@ class AvailabilityResponseMemberSerializer(serializers.Serializer):
     unavailable_count = serializers.IntegerField()
     submitted_at = serializers.DateTimeField(allow_null=True)
     slots = AvailabilityResponseItemSerializer(many=True)
+
+class AttendanceActionLogSerializer(serializers.ModelSerializer):
+    action_label = serializers.CharField(source="get_action_display", read_only=True)
+    member_name = serializers.SerializerMethodField()
+    scanner_name = serializers.SerializerMethodField()
+    work_block_name = serializers.CharField(source="entry.work_block.name", read_only=True)
+    entry_date = serializers.DateField(source="entry.date", read_only=True)
+    starts_at = serializers.TimeField(source="entry.starts_at", read_only=True)
+    ends_at = serializers.TimeField(source="entry.ends_at", read_only=True)
+
+    class Meta:
+        model = AttendanceActionLog
+        fields = (
+            "id",
+            "entry",
+            "entry_date",
+            "starts_at",
+            "ends_at",
+            "work_block_name",
+            "action",
+            "action_label",
+            "member_name",
+            "scanner_name",
+            "created_at",
+        )
+
+    def get_member_name(self, obj):
+        user = obj.entry.membership.user if obj.entry and obj.entry.membership else None
+
+        if not user:
+            return ""
+
+        return f"{user.last_name} {user.first_name} {user.middle_name}".strip() or user.email
+
+    def get_scanner_name(self, obj):
+        user = obj.scanned_by
+
+        if not user:
+            return ""
+
+        return f"{user.last_name} {user.first_name} {user.middle_name}".strip() or user.email
+
+class AttendanceEntrySerializer(AttendanceFieldsMixin, serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    work_block_name = serializers.CharField(source="work_block.name", read_only=True)
+    checked_in_at = serializers.SerializerMethodField()
+    checked_out_at = serializers.SerializerMethodField()
+    can_manual_check_in = serializers.SerializerMethodField()
+    can_manual_check_out = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ScheduleEntry
+        fields = [
+            "id",
+            "date",
+            "starts_at",
+            "ends_at",
+            "full_name",
+            "work_block_name",
+            "checked_in_at",
+            "checked_out_at",
+            "can_manual_check_in",
+            "can_manual_check_out",
+        ]
+
+    def _get_record(self, obj):
+        try:
+            return obj.record
+        except ScheduleRecord.DoesNotExist:
+            return None
+
+    def get_full_name(self, obj):
+        user = obj.membership.user
+        return user.get_full_name() or user.email
+
+    def get_checked_in_at(self, obj):
+        record = self._get_record(obj)
+        return record.checked_in_at if record else None
+
+    def get_checked_out_at(self, obj):
+        record = self._get_record(obj)
+        return record.checked_out_at if record else None
+
+    def get_can_manual_check_in(self, obj):
+        record = self._get_record(obj)
+        return not record or not record.checked_in_at
+
+    def get_can_manual_check_out(self, obj):
+        record = self._get_record(obj)
+        return bool(record and record.checked_in_at and not record.checked_out_at)

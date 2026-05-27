@@ -25,6 +25,10 @@ from rosters.views import (
     RejectChangeRequestView,
     CreateQrTokenView,
     ScanQrView,
+    AttendanceActionLogListView,
+    AttendanceEntryListView,
+    ManualCheckInView,
+    ManualCheckOutView,
     AvailabilityFormResponsesExportView,
     WorkBlockListCreateView,
     ScheduleExportXlsxView,
@@ -92,4 +96,8 @@ urlpatterns = [
     #Отметки и смены
     path('rosters/entries/<int:entry_id>/qr/', CreateQrTokenView.as_view()),
     path('rosters/scan-qr/', ScanQrView.as_view()),
+    path('rosters/attendance-logs/', AttendanceActionLogListView.as_view()),
+    path("rosters/entries/<int:entry_id>/manual-check-in/", ManualCheckInView.as_view(),),
+    path("rosters/entries/<int:entry_id>/manual-check-out/", ManualCheckOutView.as_view(),),
+    path("rosters/attendance-entries/", AttendanceEntryListView.as_view(),),
 ]
