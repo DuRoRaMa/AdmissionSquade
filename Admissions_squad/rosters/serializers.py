@@ -53,12 +53,24 @@ class AvailabilityFormSerializer(serializers.ModelSerializer):
             "period_start",
             "period_end",
             "response_deadline",
+            "allow_work_block_choice",
             "status",
             "created_by",
             "created_at",
             "days",
         )
         read_only_fields = ("created_by", "created_at", "status")
+
+    def get_work_blocks(self, obj):
+            if not obj.allow_work_block_choice:
+                return []
+
+            blocks = WorkBlock.objects.filter(
+                squad=obj.squad,
+                is_active=True,
+            ).order_by("name")
+
+            return WorkBlockSerializer(blocks, many=True).data
 
     def validate(self, attrs):
         period_start = attrs.get("period_start")
@@ -96,6 +108,10 @@ class AvailabilityFormSerializer(serializers.ModelSerializer):
 class AvailabilitySlotInputSerializer(serializers.Serializer):
     shift_id = serializers.IntegerField()
     is_available = serializers.BooleanField()
+    preferred_work_block = serializers.IntegerField(
+        required=False,
+        allow_null=True
+    )
     comment = serializers.CharField(required=False, allow_blank=True)
 
 
