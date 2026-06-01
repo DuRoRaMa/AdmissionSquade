@@ -10,7 +10,7 @@ from rosters.services.attendance_status import close_past_schedule_entries
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-
+from django.db.models import Max
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
@@ -60,13 +60,18 @@ from .services.availability import submit_availability
 from .services.generator import generate_schedule
 from .services.changes import approve_change_request, reject_change_request
 from rosters.services.attendance import create_qr_token, scan_qr, QrNotAvailableError, manual_mark_attendance
-
+from .services.availability_forms import (
+    close_expired_availability_forms,
+    close_form_if_deadline_expired,
+    is_form_deadline_expired,
+)
 
 class AvailabilityFormListCreateView(generics.ListCreateAPIView):
     serializer_class = AvailabilityFormSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        close_expired_availability_forms()
         queryset = (
             AvailabilityForm.objects
             .all()
@@ -97,7 +102,14 @@ class AvailabilityFormOpenView(APIView):
 
     def post(self, request, pk):
         form = get_object_or_404(AvailabilityForm, pk=pk)
+        if is_form_deadline_expired(form):
+            form.status = "closed"
+            form.save(update_fields=["status"])
 
+            return Response(
+                {"detail": "Нельзя открыть форму: срок отправки ответов уже истек."},
+                status=400,
+            )
         if not can_manage_availability(request.user, form.squad):
             raise PermissionDenied("Недостаточно прав для открытия формы доступности.")
 
@@ -179,8 +191,10 @@ class ActiveAvailabilityFormView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        squad_id = request.query_params.get("squad")
+        close_expired_availability_forms()
 
+        squad_id = request.query_params.get("squad")
+        
         memberships = get_user_active_memberships(request.user)
         if squad_id:
             memberships = memberships.filter(squad_id=squad_id)
@@ -209,9 +223,30 @@ class ActiveAvailabilityFormView(APIView):
         if not form:
             return Response({"detail": "Нет открытой формы доступности."}, status=404)
 
-        serializer = AvailabilityFormSerializer(form)
-        return Response(serializer.data)
+        membership = memberships.filter(squad_id=form.squad_id).first()
 
+        if not membership:
+            return Response(
+                {"detail": "Вы не состоите в отряде, для которого открыта форма."},
+                status=403,
+            )
+        
+        serializer = AvailabilityFormSerializer(form)
+        data = serializer.data
+
+        user_slots = AvailabilitySlot.objects.filter(
+            shift__day__form=form,
+            membership=membership,
+        )
+
+        submitted_at = user_slots.aggregate(
+            submitted_at=Max("submitted_at")
+        )["submitted_at"]
+
+        data["is_submitted"] = user_slots.exists()
+        data["submitted_at"] = submitted_at.isoformat() if submitted_at else None
+
+        return Response(data)
 
 class SubmitAvailabilityView(APIView):
     permission_classes = [IsAuthenticated]

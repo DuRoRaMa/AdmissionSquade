@@ -43,6 +43,7 @@ class AvailabilityFormDaySerializer(serializers.ModelSerializer):
 class AvailabilityFormSerializer(serializers.ModelSerializer):
     days = AvailabilityFormDaySerializer(many=True)
     squad_name = serializers.CharField(source='squad.name', read_only=True)
+    work_blocks = serializers.SerializerMethodField()
     class Meta:
         model = AvailabilityForm
         fields = (
@@ -54,6 +55,7 @@ class AvailabilityFormSerializer(serializers.ModelSerializer):
             "period_end",
             "response_deadline",
             "allow_work_block_choice",
+            "work_blocks",
             "status",
             "created_by",
             "created_at",
@@ -129,10 +131,10 @@ class AvailabilitySubmitSerializer(serializers.Serializer):
 
 class AvailabilitySlotSerializer(serializers.ModelSerializer):
     shift = AvailabilityFormShiftSerializer()
-
+    preferred_work_block = WorkBlockSerializer(read_only=True)
     class Meta:
         model = AvailabilitySlot
-        fields = ("id", "shift", "is_available", "comment", "submitted_at")
+        fields = ("id", "shift", "is_available", "preferred_work_block", "comment", "submitted_at")
 
 
 class ScheduleNeedSerializer(serializers.ModelSerializer):
