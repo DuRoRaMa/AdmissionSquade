@@ -324,51 +324,159 @@ class ScheduleEntrySerializer(AttendanceFieldsMixin, serializers.ModelSerializer
 
 
 class ScheduleChangeRequestSerializer(serializers.ModelSerializer):
+    request_type_label = serializers.CharField(
+        source="get_request_type_display",
+        read_only=True,
+    )
+    status_label = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+
+    requested_by_full_name = serializers.SerializerMethodField()
+    target_membership_full_name = serializers.SerializerMethodField()
+    entry_date = serializers.SerializerMethodField()
+    work_block_name = serializers.SerializerMethodField()
+
     class Meta:
         model = ScheduleChangeRequest
         fields = "__all__"
-        read_only_fields = ("requested_by", "status", "reviewed_by", "reviewed_at", "created_at")
+        read_only_fields = (
+            "requested_by",
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+            "created_at",
+        )
+
+    def get_requested_by_full_name(self, obj):
+        user = getattr(obj, "requested_by", None)
+
+        if not user:
+            return ""
+
+        return user.get_full_name() or user.username or user.email
+
+    def get_target_membership_full_name(self, obj):
+        membership = getattr(obj, "target_membership", None)
+        user = getattr(membership, "user", None)
+
+        if not user:
+            return ""
+
+        return user.get_full_name() or user.username or user.email
+
+    def get_entry_date(self, obj):
+        entry = getattr(obj, "entry", None)
+        return getattr(entry, "date", None)
+
+    def get_work_block_name(self, obj):
+        entry = getattr(obj, "entry", None)
+        work_block = getattr(entry, "work_block", None)
+
+        return getattr(work_block, "name", "") or ""
 
     def validate(self, attrs):
         request = self.context.get("request")
-        entry = attrs.get("entry")
-        target_membership = attrs.get("target_membership")
-        request_type = attrs.get("request_type")
+        user = getattr(request, "user", None)
 
-        if not request or not request.user.is_authenticated:
-            raise serializers.ValidationError("Не удалось определить пользователя запроса.")
+        entry = attrs.get("entry") or getattr(self.instance, "entry", None)
+        request_type = attrs.get("request_type") or getattr(
+            self.instance,
+            "request_type",
+            None,
+        )
+        target_membership = attrs.get("target_membership") or getattr(
+            self.instance,
+            "target_membership",
+            None,
+        )
 
-        if entry.membership.user_id != request.user.id and not request.user.is_staff:
-            raise serializers.ValidationError("Можно создавать заявку только по своей смене.")
+        if not user or not user.is_authenticated:
+            raise serializers.ValidationError(
+                "Не удалось определить пользователя запроса."
+            )
+
+        if not entry:
+            raise serializers.ValidationError({
+                "entry": "Смена обязательна."
+            })
+
+        if entry.membership.user_id != user.id and not user.is_staff:
+            raise serializers.ValidationError(
+                "Можно создавать заявку только по своей смене."
+            )
 
         squad = entry.schedule.squad
-        if not request.user.is_staff and not user_has_role_permission(
-            request.user,
+
+        if not user.is_staff and not user_has_role_permission(
+            user,
             "roster.view_own",
             squad=squad,
         ):
-            raise serializers.ValidationError("Недостаточно прав для работы со своей сменой.")
-
-        if request_type == "swap":
-            if not target_membership:
-                raise serializers.ValidationError(
-                    {"target_membership": "Для swap нужно указать заменяющего."}
-                )
-
-            if target_membership.squad_id != entry.membership.squad_id:
-                raise serializers.ValidationError(
-                    {"target_membership": "Заменяющий должен быть из того же отряда."}
-                )
-
-            if not target_membership.is_active:
-                raise serializers.ValidationError(
-                    {"target_membership": "Нельзя выбрать неактивное членство."}
-                )
+            raise serializers.ValidationError(
+                "Недостаточно прав для работы со своей сменой."
+            )
 
         if entry.schedule.status != "published":
             raise serializers.ValidationError(
                 "Заявку можно создать только по опубликованному графику."
             )
+
+        if entry.status in ("cancelled", "completed", "attended", "absent"):
+            raise serializers.ValidationError(
+                "Заявку нельзя создать для закрытой смены."
+            )
+
+        has_pending_request = ScheduleChangeRequest.objects.filter(
+            entry=entry,
+            status="pending",
+        )
+
+        if self.instance:
+            has_pending_request = has_pending_request.exclude(pk=self.instance.pk)
+
+        if has_pending_request.exists():
+            raise serializers.ValidationError(
+                "По этой смене уже есть активная заявка."
+            )
+
+        if request_type == "swap":
+            if not target_membership:
+                raise serializers.ValidationError({
+                    "target_membership": "Для заявки на замену нужно выбрать участника."
+                })
+
+            if target_membership.id == entry.membership_id:
+                raise serializers.ValidationError({
+                    "target_membership": "Нельзя выбрать себя в качестве замены."
+                })
+
+            if target_membership.squad_id != entry.membership.squad_id:
+                raise serializers.ValidationError({
+                    "target_membership": "Заменяющий должен быть из того же отряда."
+                })
+
+            if not target_membership.is_active:
+                raise serializers.ValidationError({
+                    "target_membership": "Нельзя выбрать неактивного участника."
+                })
+
+            has_entry_same_day = ScheduleEntry.objects.filter(
+                schedule=entry.schedule,
+                date=entry.date,
+                membership=target_membership,
+            ).exclude(
+                status="cancelled",
+            ).exists()
+
+            if has_entry_same_day:
+                raise serializers.ValidationError({
+                    "target_membership": "У выбранного участника уже есть смена в этот день."
+                })
+
+        if request_type == "cancel":
+            attrs["target_membership"] = None
 
         return attrs
 
@@ -392,7 +500,22 @@ class AvailabilityResponseItemSerializer(serializers.Serializer):
     starts_at = serializers.TimeField()
     ends_at = serializers.TimeField()
     is_available = serializers.BooleanField()
-    comment = serializers.CharField(allow_blank=True, required=False)
+    preferred_work_block = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+    )
+    preferred_work_block_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+    )
+    preferred_work_block_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+    preferred_work_block_code = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
     submitted_at = serializers.DateTimeField(allow_null=True)
 
 

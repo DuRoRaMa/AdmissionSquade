@@ -1,193 +1,285 @@
-import random
-from datetime import date, datetime, time, timedelta
+from datetime import time, timedelta
 
-from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from accounts.models import Role
-from squads.models import Squad, SquadMembership
+from accounts.models import CustomUser, Role
 from rosters.models import (
     AvailabilityForm,
     AvailabilityFormDay,
     AvailabilityFormShift,
     AvailabilitySlot,
+    Schedule,
+    ScheduleEntry,
     WorkBlock,
 )
+from squads.models import Squad, SquadMembership
 
 
-FIRST_NAMES = [
-    "Иван", "Пётр", "Алексей", "Дмитрий", "Сергей",
-    "Андрей", "Никита", "Максим", "Василий", "Кирилл",
-    "Анна", "Мария", "Екатерина", "Анастасия", "Дарья",
-    "Полина", "Виктория", "Софья", "Елизавета", "Алина",
+TEST_PASSWORD = "Test12345!"
+
+
+WORK_BLOCKS = [
+    {
+        "code": "KC",
+        "name": "КЦ",
+    },
+    {
+        "code": "OCHN",
+        "name": "Очный прием",
+    },
+    {
+        "code": "COD",
+        "name": "ЦОД",
+    },
+    {
+        "code": "RES",
+        "name": "Ресепшен",
+    },
+    {
+        "code": "ARCH",
+        "name": "Архив",
+    },
 ]
 
-LAST_NAMES = [
-    "Иванов", "Петров", "Сидоров", "Васильев", "Виноградов",
-    "Кузнецов", "Смирнов", "Попов", "Соколов", "Морозов",
-    "Новиков", "Фёдоров", "Михайлов", "Алексеев", "Лебедев",
-]
 
-MIDDLE_NAMES = [
-    "Иванович", "Петрович", "Сергеевич", "Александрович", "Дмитриевич",
-    "Ивановна", "Петровна", "Сергеевна", "Александровна", "Дмитриевна",
+MEMBERS = [
+    {
+        "email": "ivanov.test@students.dvfu.ru",
+        "username": "ivanov_test",
+        "last_name": "Иванов",
+        "first_name": "Алексей",
+        "middle_name": "Сергеевич",
+        "phone": "+79000000001",
+        "preferred_block": "KC",
+    },
+    {
+        "email": "petrova.test@students.dvfu.ru",
+        "username": "petrova_test",
+        "last_name": "Петрова",
+        "first_name": "Мария",
+        "middle_name": "Андреевна",
+        "phone": "+79000000002",
+        "preferred_block": "KC",
+    },
+    {
+        "email": "morozov.test@students.dvfu.ru",
+        "username": "morozov_test",
+        "last_name": "Морозов",
+        "first_name": "Илья",
+        "middle_name": "Павлович",
+        "phone": "+79000000003",
+        "preferred_block": "KC",
+    },
+    {
+        "email": "sidorov.test@students.dvfu.ru",
+        "username": "sidorov_test",
+        "last_name": "Сидоров",
+        "first_name": "Никита",
+        "middle_name": "Олегович",
+        "phone": "+79000000004",
+        "preferred_block": "OCHN",
+    },
+    {
+        "email": "vasilieva.test@students.dvfu.ru",
+        "username": "vasilieva_test",
+        "last_name": "Васильева",
+        "first_name": "Ксения",
+        "middle_name": "Дмитриевна",
+        "phone": "+79000000005",
+        "preferred_block": "OCHN",
+    },
+    {
+        "email": "smirnova.test@students.dvfu.ru",
+        "username": "smirnova_test",
+        "last_name": "Смирнова",
+        "first_name": "Анна",
+        "middle_name": "Игоревна",
+        "phone": "+79000000006",
+        "preferred_block": "COD",
+    },
+    {
+        "email": "belova.test@students.dvfu.ru",
+        "username": "belova_test",
+        "last_name": "Белова",
+        "first_name": "Полина",
+        "middle_name": "Романовна",
+        "phone": "+79000000007",
+        "preferred_block": "COD",
+    },
+    {
+        "email": "orlova.test@students.dvfu.ru",
+        "username": "orlova_test",
+        "last_name": "Орлова",
+        "first_name": "София",
+        "middle_name": "Владимировна",
+        "phone": "+79000000008",
+        "preferred_block": "RES",
+    },
+    {
+        "email": "kuznecova.test@students.dvfu.ru",
+        "username": "kuznecova_test",
+        "last_name": "Кузнецова",
+        "first_name": "Дарья",
+        "middle_name": "Алексеевна",
+        "phone": "+79000000009",
+        "preferred_block": None,
+    },
+    {
+        "email": "novikov.test@students.dvfu.ru",
+        "username": "novikov_test",
+        "last_name": "Новиков",
+        "first_name": "Артем",
+        "middle_name": "Максимович",
+        "phone": "+79000000010",
+        "preferred_block": None,
+    },
 ]
 
 
 class Command(BaseCommand):
-    help = (
-        "Создаёт тестовых пользователей, добавляет их в отряд, "
-        "создаёт закрытую форму доступности и случайно заполняет ответы."
-    )
-
-    def add_arguments(self, parser):
-        parser.add_argument(
-            "--squad",
-            default="Тестовый отряд для графика",
-            help="Название отряда.",
-        )
-
-        parser.add_argument(
-            "--form-title",
-            default="Тестовая форма доступности для графика",
-            help="Название формы доступности.",
-        )
-
-        parser.add_argument(
-            "--users",
-            type=int,
-            default=30,
-            help="Сколько тестовых пользователей создать.",
-        )
-
-        parser.add_argument(
-            "--start",
-            default="2026-04-20",
-            help="Дата начала формы в формате YYYY-MM-DD.",
-        )
-
-        parser.add_argument(
-            "--end",
-            default="2026-05-03",
-            help="Дата окончания формы в формате YYYY-MM-DD.",
-        )
-
-        parser.add_argument(
-            "--response-rate",
-            type=float,
-            default=0.85,
-            help="Вероятность, что участник вообще ответит на форму. От 0 до 1.",
-        )
-
-        parser.add_argument(
-            "--availability-rate",
-            type=float,
-            default=0.65,
-            help="Вероятность, что участник выберет 'выйду' по конкретной смене. От 0 до 1.",
-        )
-
-        parser.add_argument(
-            "--with-extra",
-            action="store_true",
-            help="Создавать дополнительную смену на каждый день.",
-        )
-
-        parser.add_argument(
-            "--password",
-            default="Test12345!",
-            help="Пароль для созданных тестовых пользователей.",
-        )
-
-        parser.add_argument(
-            "--clear-old-form",
-            action="store_true",
-            help="Удалить старую форму с таким же названием перед созданием новой.",
-        )
+    help = "Создает тестовые данные для проверки генерации графика по выбранным блокам работы."
 
     @transaction.atomic
     def handle(self, *args, **options):
-        users_count = options["users"]
+        roles = self.create_roles()
+        squad = self.create_squad()
+        work_blocks = self.create_work_blocks(squad)
 
-        if users_count < 1:
-            raise CommandError("Количество пользователей должно быть больше 0.")
-
-        period_start = self.parse_date(options["start"])
-        period_end = self.parse_date(options["end"])
-
-        if period_end < period_start:
-            raise CommandError("Дата окончания не может быть раньше даты начала.")
-
-        response_rate = options["response_rate"]
-        availability_rate = options["availability_rate"]
-
-        if not 0 <= response_rate <= 1:
-            raise CommandError("--response-rate должен быть от 0 до 1.")
-
-        if not 0 <= availability_rate <= 1:
-            raise CommandError("--availability-rate должен быть от 0 до 1.")
-
-        squad = self.get_or_create_squad(options["squad"])
-        role = Role.get_or_create_default_member_role()
-
-        users = self.create_users(users_count, options["password"])
-        memberships = self.create_memberships(users, squad, role)
-
-        self.create_work_blocks(squad)
-
-        if options["clear_old_form"]:
-            AvailabilityForm.objects.filter(
-                squad=squad,
-                title=options["form_title"],
-            ).delete()
-
-        form = self.create_or_replace_form(
+        commander = self.create_commander()
+        self.create_membership(
+            user=commander,
             squad=squad,
-            title=options["form_title"],
-            period_start=period_start,
-            period_end=period_end,
+            role=roles["commander"],
         )
 
-        shifts = self.create_days_and_shifts(
-            form=form,
-            period_start=period_start,
-            period_end=period_end,
-            with_extra=options["with_extra"],
+        memberships = []
+
+        for member_data in MEMBERS:
+            user = self.create_user(member_data)
+            membership = self.create_membership(
+                user=user,
+                squad=squad,
+                role=roles["member"],
+            )
+            memberships.append(
+                {
+                    "membership": membership,
+                    "preferred_block": member_data["preferred_block"],
+                }
+            )
+
+        form = self.create_availability_form(
+            squad=squad,
+            created_by=commander,
         )
 
-        stats = self.fill_random_availability(
-            memberships=memberships,
+        shifts = self.create_form_days_and_shifts(form)
+        self.create_availability_answers(
             shifts=shifts,
-            response_rate=response_rate,
-            availability_rate=availability_rate,
+            memberships=memberships,
+            work_blocks=work_blocks,
+        )
+        self.create_history_for_rest_priority(
+            squad=squad,
+            commander=commander,
+            work_blocks=work_blocks,
+            memberships=memberships,
+            period_start=form.period_start,
         )
 
         self.stdout.write(self.style.SUCCESS("Тестовые данные созданы."))
-        self.stdout.write(f"Отряд: {squad.name} ID={squad.id}")
-        self.stdout.write(f"Форма: {form.title} ID={form.id}")
-        self.stdout.write(f"Период: {form.period_start} — {form.period_end}")
-        self.stdout.write(f"Пользователей в отряде: {len(memberships)}")
-        self.stdout.write(f"Смен в форме: {len(shifts)}")
-        self.stdout.write(f"Ответили участников: {stats['responded']}")
-        self.stdout.write(f"Не ответили участников: {stats['not_responded']}")
-        self.stdout.write(f"Создано слотов доступности: {stats['slots']}")
         self.stdout.write("")
-        self.stdout.write("Логины пользователей:")
-        self.stdout.write("demo_av_001@students.dvfu.ru ...")
-        self.stdout.write(f"Пароль: {options['password']}")
+        self.stdout.write(f"Отряд: {squad.name}")
+        self.stdout.write(f"Форма доступности: {form.title}")
+        self.stdout.write(f"Период формы: {form.period_start} — {form.period_end}")
+        self.stdout.write(f"Статус формы: {form.status}")
+        self.stdout.write("")
+        self.stdout.write("Пользователь для входа командиром:")
+        self.stdout.write(f"email: {commander.email}")
+        self.stdout.write(f"password: {TEST_PASSWORD}")
+        self.stdout.write("")
+        self.stdout.write("Рекомендуемые потребности для проверки генератора:")
+        self.stdout.write("1) КЦ — 2 человека, 10:00–18:00")
+        self.stdout.write("2) Очный прием — 2 человека, 10:00–18:00")
+        self.stdout.write("3) ЦОД — 2 человека, 10:00–18:00")
+        self.stdout.write("4) Ресепшен — 1 человек, 10:00–18:00")
+        self.stdout.write("")
+        self.stdout.write(
+            "Если для КЦ поставить потребность 4 человека, генератор должен сначала взять тех, кто выбрал КЦ, "
+            "а потом добрать доступных участников без выбранного блока."
+        )
 
-    def parse_date(self, value):
-        try:
-            return date.fromisoformat(value)
-        except ValueError as exc:
-            raise CommandError(f"Некорректная дата: {value}. Используй YYYY-MM-DD.") from exc
+    def create_roles(self):
+        Role.ensure_system_roles()
 
-    def get_or_create_squad(self, squad_name):
-        squad, created = Squad.objects.get_or_create(
-            name=squad_name,
+        member_role = Role.get_or_create_default_member_role()
+
+        base_user_role = Role.get_or_create_base_user_role()
+
+        commander_role, _ = Role.objects.get_or_create(
+            slug="commander",
             defaults={
-                "description": "Тестовый отряд для проверки доступности и графика.",
+                "name": "Командир отряда",
+                "description": "Тестовая роль командира для управления отрядом, формами и графиками.",
+                "parent": base_user_role,
+                "permissions": [
+                    "squad.view",
+                    "squad.manage",
+                    "membership.join_own",
+                    "membership.manage",
+                    "availability.respond_own",
+                    "availability.manage",
+                    "roster.view_own",
+                    "roster.view_all",
+                    "roster.manage",
+                    "roster.publish",
+                    "fee.view_own",
+                    "fee.manage",
+                ],
+                "is_system": False,
+            },
+        )
+
+        changed = False
+
+        required_permissions = [
+            "squad.view",
+            "squad.manage",
+            "membership.join_own",
+            "membership.manage",
+            "availability.respond_own",
+            "availability.manage",
+            "roster.view_own",
+            "roster.view_all",
+            "roster.manage",
+            "roster.publish",
+            "fee.view_own",
+            "fee.manage",
+        ]
+
+        if sorted(commander_role.permissions or []) != sorted(required_permissions):
+            commander_role.permissions = required_permissions
+            changed = True
+
+        if commander_role.parent_id != base_user_role.id:
+            commander_role.parent = base_user_role
+            changed = True
+
+        if changed:
+            commander_role.save()
+
+        return {
+            "member": member_role,
+            "commander": commander_role,
+        }
+
+    def create_squad(self):
+        squad, _ = Squad.objects.update_or_create(
+            name="Тестовый отряд для генерации",
+            defaults={
+                "description": "Отряд для проверки распределения участников по выбранным блокам работы.",
                 "regional_office": "Приморское РО",
                 "region": "Приморский край",
                 "employer": 'ФГАОУ ВО "ДВФУ"',
@@ -195,263 +287,267 @@ class Command(BaseCommand):
             },
         )
 
-        if created:
-            self.stdout.write(f"Создан отряд: {squad.name}")
-        else:
-            self.stdout.write(f"Используется существующий отряд: {squad.name}")
-
         return squad
 
-    def create_users(self, users_count, password):
-        User = get_user_model()
-        users = []
+    def create_work_blocks(self, squad):
+        result = {}
 
-        for index in range(1, users_count + 1):
-            number = str(index).zfill(3)
-            username = f"demo_av_{number}"
-            email = f"{username}@students.dvfu.ru"
-
-            first_name = random.choice(FIRST_NAMES)
-            last_name = random.choice(LAST_NAMES)
-            middle_name = random.choice(MIDDLE_NAMES)
-
-            user, created = User.objects.get_or_create(
-                email=email,
+        for block_data in WORK_BLOCKS:
+            block, _ = WorkBlock.objects.update_or_create(
+                squad=squad,
+                code=block_data["code"],
                 defaults={
-                    "username": username,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "middle_name": middle_name,
-                    "birth_day": date(2002, random.randint(1, 12), random.randint(1, 28)),
-                    "gender": random.choice(["male", "female"]),
+                    "name": block_data["name"],
                     "is_active": True,
                 },
             )
 
-            if created:
-                user.set_password(password)
-                user.save(update_fields=["password"])
-            else:
-                changed_fields = []
+            result[block.code] = block
 
-                if user.username != username:
-                    user.username = username
-                    changed_fields.append("username")
+        return result
 
-                if not user.first_name:
-                    user.first_name = first_name
-                    changed_fields.append("first_name")
+    def create_commander(self):
+        commander_data = {
+            "email": "commander.test@dvfu.ru",
+            "username": "commander_test",
+            "last_name": "Командирова",
+            "first_name": "Елена",
+            "middle_name": "Викторовна",
+            "phone": "+79000000000",
+        }
 
-                if not user.last_name:
-                    user.last_name = last_name
-                    changed_fields.append("last_name")
+        commander = self.create_user(commander_data)
+        commander.is_staff = True
+        commander.save(update_fields=["is_staff"])
 
-                if not user.middle_name:
-                    user.middle_name = middle_name
-                    changed_fields.append("middle_name")
+        return commander
 
-                if changed_fields:
-                    user.save(update_fields=changed_fields)
+    def create_user(self, data):
+        user, _ = CustomUser.objects.get_or_create(
+            email=data["email"],
+            defaults={
+                "username": data["username"],
+                "last_name": data["last_name"],
+                "first_name": data["first_name"],
+                "middle_name": data["middle_name"],
+                "phone": data["phone"],
+                "birth_day": "2002-01-01",
+            },
+        )
 
-            users.append(user)
+        user.username = data["username"]
+        user.last_name = data["last_name"]
+        user.first_name = data["first_name"]
+        user.middle_name = data["middle_name"]
+        user.phone = data["phone"]
+        user.birth_day = "2002-01-01"
+        user.is_active = True
+        user.is_blocked = False
+        user.set_password(TEST_PASSWORD)
+        user.save()
 
-        return users
+        return user
 
-    def create_memberships(self, users, squad, role):
-        memberships = []
+    def create_membership(self, user, squad, role):
+        membership, _ = SquadMembership.objects.get_or_create(
+            user=user,
+            defaults={
+                "squad": squad,
+                "role": role,
+                "is_active": True,
+                "university": 'ФГАОУ ВО "ДВФУ"',
+            },
+        )
 
-        for index, user in enumerate(users, start=1):
-            active_membership = (
-                SquadMembership.objects
-                .filter(user=user, is_active=True)
-                .select_related("squad")
-                .first()
-            )
+        membership.squad = squad
+        membership.role = role
+        membership.is_active = True
+        membership.university = 'ФГАОУ ВО "ДВФУ"'
+        membership.save()
 
-            if active_membership:
-                if active_membership.squad_id != squad.id:
-                    active_membership.squad = squad
-                    active_membership.role = role
-                    active_membership.ticket_number = f"TEST-{index:04d}"
-                    active_membership.save(
-                        update_fields=["squad", "role", "ticket_number"],
-                    )
-                else:
-                    if active_membership.role_id != role.id:
-                        active_membership.role = role
-                        active_membership.save(update_fields=["role"])
+        return membership
 
-                memberships.append(active_membership)
-                continue
+    def create_availability_form(self, squad, created_by):
+        today = timezone.localdate()
+        period_start = today + timedelta(days=1)
+        period_end = period_start + timedelta(days=2)
 
-            membership = SquadMembership.objects.create(
-                user=user,
-                squad=squad,
-                role=role,
-                ticket_number=f"TEST-{index:04d}",
-                university='ФГАОУ ВО "ДВФУ"',
-                is_active=True,
-            )
-            memberships.append(membership)
+        form, _ = AvailabilityForm.objects.update_or_create(
+            squad=squad,
+            title="Тестовая форма доступности для генерации",
+            defaults={
+                "period_start": period_start,
+                "period_end": period_end,
+                "response_deadline": timezone.now() - timedelta(hours=1),
+                "allow_work_block_choice": True,
+                "status": "closed",
+                "created_by": created_by,
+            },
+        )
 
-        return memberships
+        return form
 
-    def create_work_blocks(self, squad):
-        blocks = [
-            ("REG", "Регистрация абитуриентов"),
-            ("DOC", "Работа с документами"),
-            ("INFO", "Информационная стойка"),
-            ("FLOW", "Сопровождение потока"),
+    def create_form_days_and_shifts(self, form):
+        expected_dates = [
+            form.period_start + timedelta(days=offset)
+            for offset in range((form.period_end - form.period_start).days + 1)
         ]
 
-        for code, name in blocks:
-            WorkBlock.objects.get_or_create(
-                squad=squad,
-                code=code,
+        form.days.exclude(date__in=expected_dates).delete()
+
+        shifts = []
+
+        for current_date in expected_dates:
+            day, _ = AvailabilityFormDay.objects.get_or_create(
+                form=form,
+                date=current_date,
+            )
+
+            primary_shift, _ = AvailabilityFormShift.objects.update_or_create(
+                day=day,
+                shift_kind="primary",
                 defaults={
-                    "name": name,
+                    "title": "Основная смена",
+                    "starts_at": time(10, 0),
+                    "ends_at": time(18, 0),
                     "is_active": True,
                 },
             )
 
-    def create_or_replace_form(self, squad, title, period_start, period_end):
-        existing_form = (
-            AvailabilityForm.objects
-            .filter(squad=squad, title=title)
-            .first()
-        )
-
-        if existing_form:
-            existing_form.days.all().delete()
-            existing_form.period_start = period_start
-            existing_form.period_end = period_end
-            existing_form.response_deadline = timezone.now() - timedelta(hours=1)
-            existing_form.status = "closed"
-            existing_form.save(
-                update_fields=[
-                    "period_start",
-                    "period_end",
-                    "response_deadline",
-                    "status",
-                ],
-            )
-            return existing_form
-
-        creator = self.get_creator_user()
-
-        return AvailabilityForm.objects.create(
-            squad=squad,
-            title=title,
-            period_start=period_start,
-            period_end=period_end,
-            response_deadline=timezone.now() - timedelta(hours=1),
-            status="closed",
-            created_by=creator,
-        )
-
-    def get_creator_user(self):
-        User = get_user_model()
-
-        return (
-            User.objects.filter(is_superuser=True).first()
-            or User.objects.filter(is_staff=True).first()
-            or User.objects.first()
-        )
-
-    def create_days_and_shifts(self, form, period_start, period_end, with_extra):
-        shifts = []
-        current = period_start
-
-        while current <= period_end:
-            day = AvailabilityFormDay.objects.create(
-                form=form,
-                date=current,
-            )
-
-            primary_shift = AvailabilityFormShift.objects.create(
+            extra_shift, _ = AvailabilityFormShift.objects.update_or_create(
                 day=day,
-                shift_kind="primary",
-                title="Основная смена",
-                starts_at=time(9, 0),
-                ends_at=time(15, 0),
-                is_active=True,
+                shift_kind="extra",
+                defaults={
+                    "title": "Дополнительная смена",
+                    "starts_at": time(18, 0),
+                    "ends_at": time(21, 0),
+                    "is_active": True,
+                },
             )
+
             shifts.append(primary_shift)
-
-            if with_extra:
-                extra_shift = AvailabilityFormShift.objects.create(
-                    day=day,
-                    shift_kind="extra",
-                    title="Дополнительная смена",
-                    starts_at=time(15, 0),
-                    ends_at=time(20, 0),
-                    is_active=True,
-                )
-                shifts.append(extra_shift)
-
-            current += timedelta(days=1)
+            shifts.append(extra_shift)
 
         return shifts
 
-    def fill_random_availability(
-        self,
-        memberships,
-        shifts,
-        response_rate,
-        availability_rate,
-    ):
-        AvailabilitySlot.objects.filter(
-            membership__in=memberships,
-            shift__in=shifts,
-        ).delete()
+    def create_availability_answers(self, shifts, memberships, work_blocks):
+        for shift in shifts:
+            for item in memberships:
+                membership = item["membership"]
+                preferred_block_code = item["preferred_block"]
 
-        responded = 0
-        not_responded = 0
-        slots_count = 0
-
-        comments_available = [
-            "",
-            "",
-            "",
-            "Могу выйти без ограничений",
-            "Удобно в это время",
-        ]
-
-        comments_unavailable = [
-            "",
-            "",
-            "Не могу",
-            "Занят в это время",
-            "Неудобная смена",
-        ]
-
-        for membership in memberships:
-            has_response = random.random() <= response_rate
-
-            if not has_response:
-                not_responded += 1
-                continue
-
-            responded += 1
-
-            for shift in shifts:
-                is_available = random.random() <= availability_rate
-
-                comment = random.choice(
-                    comments_available if is_available else comments_unavailable
+                is_available = self.is_member_available(
+                    membership=membership,
+                    shift=shift,
+                    preferred_block_code=preferred_block_code,
                 )
 
-                AvailabilitySlot.objects.create(
+                preferred_work_block = None
+
+                if is_available and preferred_block_code:
+                    preferred_work_block = work_blocks[preferred_block_code]
+
+                AvailabilitySlot.objects.update_or_create(
                     shift=shift,
                     membership=membership,
-                    is_available=is_available,
-                    comment=comment,
+                    defaults={
+                        "is_available": is_available,
+                        "preferred_work_block": preferred_work_block,
+                    },
                 )
 
-                slots_count += 1
+    def is_member_available(self, membership, shift, preferred_block_code):
+        """
+        Основная смена:
+        почти все доступны, чтобы было видно распределение по блокам.
 
-        return {
-            "responded": responded,
-            "not_responded": not_responded,
-            "slots": slots_count,
+        Дополнительная смена:
+        доступны только несколько человек, чтобы можно было отдельно проверить вечернюю смену.
+        """
+        email = membership.user.email
+
+        if shift.shift_kind == "extra":
+            return email in {
+                "kuznecova.test@students.dvfu.ru",
+                "novikov.test@students.dvfu.ru",
+                "orlova.test@students.dvfu.ru",
+                "petrova.test@students.dvfu.ru",
+            }
+
+        if shift.day.date == shift.day.form.period_start + timedelta(days=1):
+            return email not in {
+                "ivanov.test@students.dvfu.ru",
+                "sidorov.test@students.dvfu.ru",
+            }
+
+        return True
+
+    def create_history_for_rest_priority(
+        self,
+        squad,
+        commander,
+        work_blocks,
+        memberships,
+        period_start,
+    ):
+        """
+        Создает несколько старых назначений, чтобы можно было проверить приоритет:
+        те, кто давно не выходил, должны подниматься выше внутри своей группы.
+        """
+        history_schedule, _ = Schedule.objects.update_or_create(
+            squad=squad,
+            title="Тестовая история прошлых смен",
+            defaults={
+                "availability_form": None,
+                "period_start": period_start - timedelta(days=7),
+                "period_end": period_start - timedelta(days=1),
+                "status": "archived",
+                "created_by": commander,
+            },
+        )
+
+        history_schedule.entries.all().delete()
+
+        membership_by_email = {
+            item["membership"].user.email: item["membership"]
+            for item in memberships
         }
+
+        history_items = [
+            {
+                "email": "ivanov.test@students.dvfu.ru",
+                "days_before": 1,
+                "work_block": "KC",
+            },
+            {
+                "email": "sidorov.test@students.dvfu.ru",
+                "days_before": 2,
+                "work_block": "OCHN",
+            },
+            {
+                "email": "smirnova.test@students.dvfu.ru",
+                "days_before": 5,
+                "work_block": "COD",
+            },
+            {
+                "email": "orlova.test@students.dvfu.ru",
+                "days_before": 4,
+                "work_block": "RES",
+            },
+        ]
+
+        for item in history_items:
+            membership = membership_by_email[item["email"]]
+            work_block = work_blocks[item["work_block"]]
+            entry_date = period_start - timedelta(days=item["days_before"])
+
+            ScheduleEntry.objects.create(
+                schedule=history_schedule,
+                need=None,
+                membership=membership,
+                work_block=work_block,
+                date=entry_date,
+                starts_at=time(10, 0),
+                ends_at=time(18, 0),
+                status="attended",
+            )

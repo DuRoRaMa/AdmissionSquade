@@ -38,7 +38,8 @@ from rosters.views import (
     WorkBlockDetailView,
     ScheduleDetailView,
     ScheduleNeedsUpdateView,
-    ScheduleAssignmentsUpdateView
+    ScheduleAssignmentsUpdateView,
+    ReplacementCandidatesView,
 )
 
 
@@ -97,6 +98,7 @@ urlpatterns = [
     path('rosters/my-change-requests/', MyChangeRequestsView.as_view()),
     path('rosters/change-requests/<int:pk>/approve/', ApproveChangeRequestView.as_view()),
     path('rosters/change-requests/<int:pk>/reject/', RejectChangeRequestView.as_view()),
+    path('rosters/entries/<int:entry_id>/replacement-candidates/', ReplacementCandidatesView.as_view(), name='replacement_candidates',),
     #Отметки и смены
     path('rosters/entries/<int:entry_id>/qr/', CreateQrTokenView.as_view()),
     path('rosters/scan-qr/', ScanQrView.as_view()),

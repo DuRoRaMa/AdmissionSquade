@@ -284,7 +284,8 @@ class ScheduleChangeRequest(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='incoming_change_requests'
+        related_name='replacement_requests',
+        verbose_name='Участник на замену',
     )
     status = models.CharField(
         max_length=20,

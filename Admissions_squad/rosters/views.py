@@ -10,7 +10,7 @@ from rosters.services.attendance_status import close_past_schedule_entries
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from django.db.models import Max
+from django.db.models import Count, Max
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
@@ -38,14 +38,16 @@ from .serializers import (
     AvailabilityResponseMemberSerializer,
     AvailabilityFormSerializer,
     AvailabilitySubmitSerializer,
+    AvailabilitySlotSerializer,
     ScheduleSerializer,
     ScheduleEntrySerializer,
     ScheduleChangeRequestSerializer,
     WorkBlockSerializer,
     ScheduleNeedSerializer,
     AttendanceActionLogSerializer,
-    AttendanceEntrySerializer
+    AttendanceEntrySerializer,
 )
+
 from .permissions import (
     can_manage_availability,
     can_respond_own_availability,
@@ -191,11 +193,10 @@ class ActiveAvailabilityFormView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        close_expired_availability_forms()
-
         squad_id = request.query_params.get("squad")
-        
+
         memberships = get_user_active_memberships(request.user)
+
         if squad_id:
             memberships = memberships.filter(squad_id=squad_id)
 
@@ -211,8 +212,10 @@ class ActiveAvailabilityFormView(APIView):
                 status=404,
             )
 
-        squad = allowed_memberships[0].squad
-        form = (
+        membership = allowed_memberships[0]
+        squad = membership.squad
+
+        open_form = (
             AvailabilityForm.objects
             .filter(squad=squad, status="open")
             .prefetch_related("days__shifts")
@@ -220,31 +223,64 @@ class ActiveAvailabilityFormView(APIView):
             .first()
         )
 
-        if not form:
-            return Response({"detail": "Нет открытой формы доступности."}, status=404)
-
-        membership = memberships.filter(squad_id=form.squad_id).first()
-
-        if not membership:
-            return Response(
-                {"detail": "Вы не состоите в отряде, для которого открыта форма."},
-                status=403,
+        archived_form = (
+            AvailabilityForm.objects
+            .filter(
+                squad=squad,
+                status="closed",
+                days__shifts__responses__membership=membership,
             )
-        
-        serializer = AvailabilityFormSerializer(form)
-        data = serializer.data
+            .prefetch_related("days__shifts")
+            .order_by("-created_at")
+            .distinct()
+            .first()
+        )
 
-        user_slots = AvailabilitySlot.objects.filter(
-            shift__day__form=form,
-            membership=membership,
+        form = open_form or archived_form
+
+        if not form:
+            return Response(
+                {"detail": "Нет открытой формы доступности или архивного ответа."},
+                status=404,
+            )
+
+        user_slots = (
+            AvailabilitySlot.objects
+            .filter(
+                shift__day__form=form,
+                membership=membership,
+            )
+            .select_related(
+                "shift",
+                "shift__day",
+            )
+            .order_by(
+                "shift__day__date",
+                "shift__starts_at",
+                "shift__id",
+            )
         )
 
         submitted_at = user_slots.aggregate(
-            submitted_at=Max("submitted_at")
-        )["submitted_at"]
+            value=Max("submitted_at")
+        )["value"]
 
-        data["is_submitted"] = user_slots.exists()
+        deadline_expired = bool(
+            form.response_deadline and timezone.now() > form.response_deadline
+        )
+
+        can_edit = form.status == "open" and not deadline_expired
+        is_submitted = user_slots.exists()
+
+        data = dict(AvailabilityFormSerializer(form).data)
+
+        data["is_submitted"] = is_submitted
         data["submitted_at"] = submitted_at.isoformat() if submitted_at else None
+        data["deadline_expired"] = deadline_expired
+        data["can_edit"] = can_edit
+        data["is_readonly"] = not can_edit
+        data["view_mode"] = "edit" if can_edit else "archive"
+        data["user_slots"] = AvailabilitySlotSerializer(user_slots, many=True).data
 
         return Response(data)
 
@@ -280,7 +316,7 @@ class SubmitAvailabilityView(APIView):
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
 
-        return Response({"message": "Ответ принят"})
+        return Response({"message": "Ответ сохранен"})
 
 
 class ScheduleListCreateView(generics.ListCreateAPIView):
@@ -687,20 +723,67 @@ class PublishScheduleView(APIView):
 
         return Response({"message": "График опубликован"})
 
+class ReplacementCandidatesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, entry_id):
+        entry = get_object_or_404(
+            ScheduleEntry.objects.select_related(
+                'schedule',
+                'schedule__squad',
+                'membership',
+                'membership__user',
+            ),
+            id=entry_id,
+        )
+
+        if entry.membership.user_id != request.user.id:
+            return Response(
+                {'detail': 'Можно смотреть замену только для своей смены.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        busy_membership_ids = ScheduleEntry.objects.filter(
+            schedule=entry.schedule,
+            date=entry.date,
+        ).exclude(status='cancelled').values_list('membership_id', flat=True)
+
+        candidates = SquadMembership.objects.select_related('user').filter(
+            squad=entry.schedule.squad,
+        ).exclude(
+            id__in=busy_membership_ids,
+        ).exclude(
+            id=entry.membership_id,
+        )
+
+        if hasattr(SquadMembership, 'status'):
+            candidates = candidates.filter(status='active')
+
+        candidates = candidates.order_by(
+            'user__last_name',
+            'user__first_name',
+            'user__username',
+        )
+
+        data = []
+        for membership in candidates:
+            user = membership.user
+            full_name = user.get_full_name() or user.username or user.email
+
+            data.append({
+                'id': membership.id,
+                'user_id': user.id,
+                'full_name': full_name,
+                'email': user.email,
+            })
+
+        return Response(data)
 
 class MyScheduleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         close_past_schedule_entries()
-        if request.user.is_staff:
-            queryset = (
-                ScheduleEntry.objects
-                .filter(schedule__status="published")
-                .select_related("work_block", "schedule", "membership__user", "membership__squad")
-            )
-            serializer = ScheduleEntrySerializer(queryset, many=True)
-            return Response(serializer.data)
 
         allowed_membership_ids = [
             membership.id
@@ -709,19 +792,34 @@ class MyScheduleView(APIView):
         ]
 
         if not allowed_membership_ids:
-            return Response([], status=200)
+            return Response([], status=status.HTTP_200_OK)
 
         entries = (
             ScheduleEntry.objects
             .filter(
                 membership_id__in=allowed_membership_ids,
+                membership__user=request.user,
                 schedule__status="published",
             )
-            .select_related("work_block", "schedule", "membership__user", "membership__squad")
+            .select_related(
+                "work_block",
+                "schedule",
+                "schedule__squad",
+                "membership",
+                "membership__user",
+                "membership__role",
+                "membership__squad",
+            )
+            .order_by(
+                "date",
+                "starts_at",
+                "work_block__name",
+                "schedule_id",
+            )
         )
 
         serializer = ScheduleEntrySerializer(entries, many=True)
-        return Response(serializer.data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class ChangeRequestCreateView(generics.CreateAPIView):
@@ -976,12 +1074,18 @@ class AvailabilityFormResponsesView(APIView):
                 shift__day__form=form,
                 membership__in=memberships,
             )
-            .select_related("membership__user", "membership__role", "shift__day")
+            .select_related(
+                "membership__user",
+                "membership__role",
+                "shift__day",
+                "preferred_work_block",
+            )
             .order_by("membership_id", "shift__day__date", "shift__starts_at")
         )
 
         slots_by_membership = {}
         for slot in slots:
+            preferred_work_block = slot.preferred_work_block
             slots_by_membership.setdefault(slot.membership_id, []).append(
                 {
                     "shift_id": slot.shift_id,
@@ -990,7 +1094,14 @@ class AvailabilityFormResponsesView(APIView):
                     "starts_at": slot.shift.starts_at,
                     "ends_at": slot.shift.ends_at,
                     "is_available": slot.is_available,
-                    "comment": slot.comment or "",
+                    "preferred_work_block": slot.preferred_work_block_id,
+                    "preferred_work_block_id": slot.preferred_work_block_id,
+                    "preferred_work_block_name": (
+                        preferred_work_block.name if preferred_work_block else ""
+                    ),
+                    "preferred_work_block_code": (
+                        preferred_work_block.code if preferred_work_block else ""
+                    ),
                     "submitted_at": slot.submitted_at,
                 }
             )

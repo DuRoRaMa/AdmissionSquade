@@ -15,24 +15,38 @@ def approve_change_request(change_request, reviewer):
 
     elif change_request.request_type == "swap":
         if not change_request.target_membership:
-            raise ValueError("Для swap нужно указать target_membership.")
+            raise ValueError("Для заявки на замену нужно указать участника.")
 
-        if change_request.target_membership.squad_id != entry.membership.squad_id:
+        target_membership = change_request.target_membership
+
+        if target_membership.squad_id != entry.membership.squad_id:
             raise ValueError("Нельзя передать смену участнику из другого отряда.")
 
-        if not change_request.target_membership.is_active:
+        if not target_membership.is_active:
             raise ValueError("Нельзя передать смену неактивному участнику.")
 
-        entry.membership = change_request.target_membership
-        entry.save(update_fields=["membership"])
+        entry.membership = target_membership
+        entry.status = "planned"
+        entry.save(update_fields=["membership", "status"])
 
     elif change_request.request_type == "time_change":
-        raise ValueError("Изменение времени пока не поддерживается в сервисе согласования.")
+        raise ValueError("Изменение времени пока не поддерживается.")
+
+    else:
+        raise ValueError("Неизвестный тип заявки.")
 
     change_request.status = "approved"
     change_request.reviewed_by = reviewer
     change_request.reviewed_at = timezone.now()
-    change_request.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+    change_request.save(
+        update_fields=[
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+        ]
+    )
+
+    return change_request
 
 
 @transaction.atomic
@@ -43,7 +57,14 @@ def reject_change_request(change_request, reviewer, comment=""):
     change_request.status = "rejected"
     change_request.reviewed_by = reviewer
     change_request.reviewed_at = timezone.now()
-    change_request.review_comment = comment
+    change_request.review_comment = comment or ""
     change_request.save(
-        update_fields=["status", "reviewed_by", "reviewed_at", "review_comment"]
+        update_fields=[
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+            "review_comment",
+        ]
     )
+
+    return change_request
