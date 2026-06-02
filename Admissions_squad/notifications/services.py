@@ -425,3 +425,24 @@ def notify_change_request_rejected(change_request):
         },
         send_email=True,
     )
+
+def notify_schedule_changed(schedule, users, target_date):
+    date_text = target_date.strftime("%d.%m.%Y")
+
+    return create_notifications(
+        recipients=users,
+        title="График изменён",
+        message=(
+            f"В графике «{schedule.title}» на {date_text} были внесены изменения. "
+            "Проверьте актуальную информацию в разделе «Мой график»."
+        ),
+        event_type=Notification.EventType.SCHEDULE_CHANGED,
+        object_url="/schedule",
+        metadata={
+            "schedule_id": schedule.id,
+            "squad_id": schedule.squad_id,
+            "date": target_date.isoformat(),
+        },
+        send_email=True,
+        email_subject="Изменения в графике",
+    )

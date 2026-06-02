@@ -1,3 +1,4 @@
+import logging
 from io import BytesIO
 from urllib.parse import quote
 from django.http import HttpResponse
@@ -13,6 +14,8 @@ from openpyxl.utils import get_column_letter
 from django.db.models import Count, Max
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
+from django.db import transaction
 
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -73,8 +76,11 @@ from notifications.services import (
     notify_change_request_created,
     notify_change_request_rejected,
     notify_schedule_published,
+    notify_schedule_changed
 )
 
+logger = logging.getLogger(__name__)
+User = get_user_model()
 
 class AvailabilityFormListCreateView(generics.ListCreateAPIView):
     serializer_class = AvailabilityFormSerializer
@@ -420,8 +426,8 @@ def _get_schedule_for_edit(schedule_id, user):
     if not can_manage_roster(user, schedule.squad):
         raise PermissionDenied("Недостаточно прав для редактирования графика.")
 
-    if schedule.status != "draft":
-        raise ValidationError("Редактировать можно только черновик графика.")
+    if schedule.status not in ("draft", "published"):
+        raise ValidationError("Редактировать можно только черновик или опубликованный график.")
 
     return schedule
 
@@ -555,7 +561,48 @@ class ScheduleNeedsUpdateView(APIView):
             "date": target_date.isoformat(),
             "needs": serializer.data,
         })
+def _entry_key_from_entry(entry):
+    return (
+        entry.membership_id,
+        entry.work_block_id,
+        entry.starts_at,
+        entry.ends_at,
+    )
 
+
+def _entry_key_from_item(item):
+    return (
+        item["membership"].id,
+        item["work_block"].id,
+        item["starts_at"],
+        item["ends_at"],
+    )
+
+
+def _notify_published_schedule_changed(schedule, target_date, affected_user_ids):
+    if schedule.status != "published":
+        return
+
+    user_ids = list({user_id for user_id in affected_user_ids if user_id})
+
+    if not user_ids:
+        return
+
+    def send_notifications():
+        try:
+            users = User.objects.filter(id__in=user_ids, is_active=True)
+
+            notify_schedule_changed(
+                schedule=schedule,
+                users=users,
+                target_date=target_date,
+            )
+        except Exception:
+            logger.exception(
+                "Не удалось отправить уведомления об изменении графика."
+            )
+
+    transaction.on_commit(send_notifications)
 class ScheduleAssignmentsUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -626,25 +673,100 @@ class ScheduleAssignmentsUpdateView(APIView):
                     "ends_at": ends_at,
                 })
 
-        ScheduleEntry.objects.filter(schedule=schedule, date=target_date).delete()
-
-        created_entries = [
-            ScheduleEntry.objects.create(
-                schedule=schedule,
-                date=target_date,
-                membership=item["membership"],
-                work_block=item["work_block"],
-                need=item["need"],
-                starts_at=item["starts_at"],
-                ends_at=item["ends_at"],
-                status="planned",
+        old_entries = list(
+            ScheduleEntry.objects
+            .filter(schedule=schedule, date=target_date)
+            .select_related(
+                "membership",
+                "membership__user",
+                "work_block",
+                "need",
             )
+        )
+
+        old_entries_by_key = {
+            _entry_key_from_entry(entry): entry
+            for entry in old_entries
+        }
+
+        new_items_by_key = {
+            _entry_key_from_item(item): item
             for item in normalized_entries
+        }
+
+        old_keys = set(old_entries_by_key.keys())
+        new_keys = set(new_items_by_key.keys())
+
+        removed_keys = old_keys - new_keys
+        added_keys = new_keys - old_keys
+        kept_keys = old_keys & new_keys
+
+        affected_membership_ids = {
+            key[0]
+            for key in removed_keys | added_keys
+        }
+
+        removed_entry_ids = [
+            old_entries_by_key[key].id
+            for key in removed_keys
         ]
 
-        serializer = ScheduleEntrySerializer(created_entries, many=True)
+        if removed_entry_ids:
+            ScheduleEntry.objects.filter(id__in=removed_entry_ids).delete()
+
+        kept_entries = []
+
+        for key in kept_keys:
+            entry = old_entries_by_key[key]
+            item = new_items_by_key[key]
+
+            need = item["need"]
+            need_id = need.id if need else None
+
+            if entry.need_id != need_id:
+                entry.need = need
+                entry.save(update_fields=["need"])
+
+            kept_entries.append(entry)
+
+        created_entries = []
+
+        for key in added_keys:
+            item = new_items_by_key[key]
+
+            created_entries.append(
+                ScheduleEntry.objects.create(
+                    schedule=schedule,
+                    date=target_date,
+                    membership=item["membership"],
+                    work_block=item["work_block"],
+                    need=item["need"],
+                    starts_at=item["starts_at"],
+                    ends_at=item["ends_at"],
+                    status="planned",
+                )
+            )
+
+        affected_user_ids = (
+            SquadMembership.objects
+            .filter(id__in=affected_membership_ids)
+            .values_list("user_id", flat=True)
+        )
+
+        _notify_published_schedule_changed(
+            schedule=schedule,
+            target_date=target_date,
+            affected_user_ids=affected_user_ids,
+        )
+
+        entries_for_response = kept_entries + created_entries
+        serializer = ScheduleEntrySerializer(entries_for_response, many=True)
         return Response({
-            "message": "Назначения сохранены.",
+            "message": (
+                "Назначения сохранены. Затронутые участники уведомлены."
+                if schedule.status == "published" and affected_membership_ids
+                else "Назначения сохранены."
+            ),
             "date": target_date.isoformat(),
             "entries": serializer.data,
         })
