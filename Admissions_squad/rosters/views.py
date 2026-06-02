@@ -67,6 +67,14 @@ from .services.availability_forms import (
     close_form_if_deadline_expired,
     is_form_deadline_expired,
 )
+from notifications.services import (
+    notify_availability_form_opened,
+    notify_change_request_approved,
+    notify_change_request_created,
+    notify_change_request_rejected,
+    notify_schedule_published,
+)
+
 
 class AvailabilityFormListCreateView(generics.ListCreateAPIView):
     serializer_class = AvailabilityFormSerializer
@@ -115,8 +123,14 @@ class AvailabilityFormOpenView(APIView):
         if not can_manage_availability(request.user, form.squad):
             raise PermissionDenied("Недостаточно прав для открытия формы доступности.")
 
+        old_status = form.status
+
         form.status = "open"
         form.save(update_fields=["status"])
+
+        if old_status != "open":
+            notify_availability_form_opened(form)
+
         return Response({"message": "Форма открыта"})
 
 
@@ -721,6 +735,8 @@ class PublishScheduleView(APIView):
         schedule.published_at = timezone.now()
         schedule.save(update_fields=["status", "published_at"])
 
+        notify_schedule_published(schedule)
+
         return Response({"message": "График опубликован"})
 
 class ReplacementCandidatesView(APIView):
@@ -827,7 +843,8 @@ class ChangeRequestCreateView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
-        serializer.save(requested_by=self.request.user)
+        change_request = serializer.save(requested_by=self.request.user)
+        notify_change_request_created(change_request)
 
 
 class MyChangeRequestsView(generics.ListAPIView):
@@ -890,9 +907,11 @@ class ApproveChangeRequestView(APIView):
             raise PermissionDenied("Недостаточно прав для одобрения заявки.")
 
         try:
-            approve_change_request(change_request, request.user)
+            change_request = approve_change_request(change_request, request.user)
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
+
+        notify_change_request_approved(change_request)
 
         return Response({"message": "Заявка одобрена"})
 
@@ -914,6 +933,7 @@ class RejectChangeRequestView(APIView):
             request.user,
             request.data.get("review_comment", ""),
         )
+        notify_change_request_rejected(change_request)
         return Response({"message": "Заявка отклонена"})
 
 
