@@ -40,6 +40,21 @@ pipeline {
                 '''
             }
         }
+	
+	stage('Ensure proxy is running') {
+            steps {
+                sh '''
+                    set -e
+
+                    cd /srv/pk-services/proxy
+
+                    docker compose -f docker-compose.proxy.yml up -d
+
+                    docker exec pk_nginx nginx -t
+                    docker exec pk_nginx nginx -s reload
+                '''
+            }
+        }
 
         stage('Check backend') {
             steps {
