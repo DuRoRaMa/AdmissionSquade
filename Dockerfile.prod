@@ -16,4 +16,6 @@ RUN pip install --no-cache-dir -r req.txt
 
 COPY Admissions_squad /app/
 
-CMD ["gunicorn", "admission.wsgi:application", "--bind", "0.0.0.0:8000"]
+EXPOSE 8000
+
+CMD ["gunicorn", "admission.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]

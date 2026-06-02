@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:15
+    container_name: sopk_db
+    env_file:
+      - ./Admissions_squad/ .env
+    volumes:
+      - sopk_postgres_data: /var/lib/postgresql/data
+    networks:
+      - sopk_internal
+    restart: unless-stopped
+  
+Queue   backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: sopk_backend
+    env_file:
+      - ./Admissions_squad/ .env
+    depends_on:
+      - db
+    volumes:
+      - sopk_static:/app/staticfiles
+      - sopk_media:/app/media
+    expose:
+      - "8000"
+    networks:
+      - sopk_internal
+      - pk_proxy
+    restart: unless-stopped
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             guicorn admission.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+volumes:
+  sopk_postgres_data:
+    name: sopk_postgres_data
+  sopk_static:
+    name: sopk_static
+  sopk_media:
+    name: sopk_media
+
+networks:
+  sopk_internal:
+  pk_proxy:
+    external: true
