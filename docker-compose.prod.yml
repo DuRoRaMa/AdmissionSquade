@@ -3,7 +3,7 @@ services:
     image: postgres:15
     container_name: sopk_db
     env_file:
-      - ./Admissions_squad/.env
+      - /srv/pk-services/Squad/AdmissionSquade/Admissions_squad/.env
     volumes:
       - sopk_postgres_data:/var/lib/postgresql/data
     networks:
@@ -16,7 +16,7 @@ services:
       dockerfile: Dockerfile.prod
     container_name: sopk_backend
     env_file:
-      - ./Admissions_squad/.env
+      - /srv/pk-services/Squad/AdmissionSquade/Admissions_squad/.env
     depends_on:
       - db
     volumes:

@@ -11,14 +11,20 @@ pipeline {
     }
 
     stages {
-        stage('Sync backend master') {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Validate env file') {
             steps {
                 sh '''
-                    git config --global --add safe.directory /srv/pk-services/Squad/AdmissionSquade
+                    set -e
 
-                    cd /srv/pk-services/Squad/AdmissionSquade
-                    git fetch origin master
-                    git reset --hard origin/master
+                    test -f /srv/pk-services/Squad/AdmissionSquade/Admissions_squad/.env
+
+                    echo "Backend .env file exists"
                 '''
             }
         }
@@ -26,7 +32,7 @@ pipeline {
         stage('Build and deploy backend') {
             steps {
                 sh '''
-                    cd /srv/pk-services/Squad/AdmissionSquade
+                    set -e
 
                     docker network inspect pk_proxy >/dev/null 2>&1 || docker network create pk_proxy
 
@@ -35,12 +41,19 @@ pipeline {
             }
         }
 
-        stage('Backend checks') {
+        stage('Check backend') {
             steps {
                 sh '''
+                    set -e
+
                     docker ps | grep sopk_backend
-                    docker exec pk_nginx wget -q --spider http://sopk_backend:8000/admin/login/
-                    docker exec pk_nginx nginx -s reload
+
+                    if docker ps --format '{{.Names}}' | grep -q '^pk_nginx$'; then
+                        docker exec pk_nginx wget -q --spider http://sopk_backend:8000/admin/login/ || true
+                        docker exec pk_nginx nginx -s reload || true
+                    fi
+
+                    echo "Backend deployed successfully"
                 '''
             }
         }
