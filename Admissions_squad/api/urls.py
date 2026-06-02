@@ -1,12 +1,13 @@
-from django.urls import path
+from django.urls import path, include
 from accounts.views import UserProfileView, UserListView, UserDetailView, ChangePasswordView, RoleListCreateView, RolePermissionCatalogView, RoleDetailView, UserStudyInfoView, PassportView
-from authorizations.views import LoginView, RegistrationView
+from authorizations.views import LoginView, RegistrationView, ResetPasswordView, ForgotPasswordView
 from rest_framework_simplejwt.views import TokenRefreshView
 from squads.views import (
     SquadListCreateView, SquadDetailView,
     SquadMembershipListCreateView, SquadMembershipDetailView,
     MembershipFeeListCreateView, MembershipFeeDetailView,
 )
+from notifications.views import SendRegistrationCodeView
 from rosters.views import (
     AvailabilityFormResponsesView,
     AvailabilityFormListCreateView,
@@ -37,14 +38,18 @@ from rosters.views import (
     WorkBlockDetailView,
     ScheduleDetailView,
     ScheduleNeedsUpdateView,
-    ScheduleAssignmentsUpdateView
+    ScheduleAssignmentsUpdateView,
+    ReplacementCandidatesView,
 )
+
 
 urlpatterns = [
     # Пользователи и аутентификация
     path('users/auth/token/', LoginView.as_view(), name='token_obtain_pair'),
     path('users/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('users/register/', RegistrationView.as_view(), name='register'),
+    path('users/password-reset/', ForgotPasswordView.as_view(), name='password-reset'),
+    path('users/password-reset/confirm/', ResetPasswordView.as_view(), name='password-reset-confirm'),
     path('users/me/', UserProfileView.as_view(), name='user_profile'),
     path('users/me/study-info/', UserStudyInfoView.as_view(), name='user_study_info'),
     path('users/me/passport/', PassportView.as_view(), name='user_passport'),
@@ -93,6 +98,7 @@ urlpatterns = [
     path('rosters/my-change-requests/', MyChangeRequestsView.as_view()),
     path('rosters/change-requests/<int:pk>/approve/', ApproveChangeRequestView.as_view()),
     path('rosters/change-requests/<int:pk>/reject/', RejectChangeRequestView.as_view()),
+    path('rosters/entries/<int:entry_id>/replacement-candidates/', ReplacementCandidatesView.as_view(), name='replacement_candidates',),
     #Отметки и смены
     path('rosters/entries/<int:entry_id>/qr/', CreateQrTokenView.as_view()),
     path('rosters/scan-qr/', ScanQrView.as_view()),
@@ -100,4 +106,6 @@ urlpatterns = [
     path("rosters/entries/<int:entry_id>/manual-check-in/", ManualCheckInView.as_view(),),
     path("rosters/entries/<int:entry_id>/manual-check-out/", ManualCheckOutView.as_view(),),
     path("rosters/attendance-entries/", AttendanceEntryListView.as_view(),),
+    #Уведомления
+    path('notifications/', include('notifications.urls')),
 ]

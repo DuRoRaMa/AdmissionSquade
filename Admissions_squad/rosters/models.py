@@ -38,6 +38,10 @@ class AvailabilityForm(models.Model):
     period_start = models.DateField()
     period_end = models.DateField()
     response_deadline = models.DateTimeField(null=True, blank=True)
+    allow_work_block_choice = models.BooleanField(
+        default=False,
+        verbose_name="Разрешить выбор блока работы"
+    )
     status = models.CharField(
         max_length=20,
         choices=STATUS_CODE,
@@ -120,6 +124,14 @@ class AvailabilitySlot(models.Model):
         SquadMembership,
         on_delete=models.CASCADE,
         related_name='availability_slots'
+    )
+    preferred_work_block = models.ForeignKey(
+        "WorkBlock",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="availability_slots",
+        verbose_name="Предпочитаемый блок работы"
     )
     is_available = models.BooleanField(default=True)
     comment = models.CharField(max_length=255, blank=True)
@@ -272,7 +284,8 @@ class ScheduleChangeRequest(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='incoming_change_requests'
+        related_name='replacement_requests',
+        verbose_name='Участник на замену',
     )
     status = models.CharField(
         max_length=20,
