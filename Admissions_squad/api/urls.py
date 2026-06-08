@@ -1,6 +1,12 @@
 from django.urls import path, include
 from accounts.views import UserProfileView, UserListView, UserDetailView, ChangePasswordView, RoleListCreateView, RolePermissionCatalogView, RoleDetailView, UserStudyInfoView, PassportView
-from authorizations.views import LoginView, RegistrationView, ResetPasswordView, ForgotPasswordView
+from authorizations.views import (
+    LoginView,
+    RegistrationStartView,
+    RegistrationView,
+    ResetPasswordView,
+    ForgotPasswordView,
+)
 from rest_framework_simplejwt.views import TokenRefreshView
 from squads.views import (
     SquadListCreateView, SquadDetailView,
@@ -47,6 +53,7 @@ urlpatterns = [
     # Пользователи и аутентификация
     path('users/auth/token/', LoginView.as_view(), name='token_obtain_pair'),
     path('users/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('users/register/start/', RegistrationStartView.as_view(), name='register-start',),
     path('users/register/', RegistrationView.as_view(), name='register'),
     path('users/password-reset/', ForgotPasswordView.as_view(), name='password-reset'),
     path('users/password-reset/confirm/', ResetPasswordView.as_view(), name='password-reset-confirm'),
