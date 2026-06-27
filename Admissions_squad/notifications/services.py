@@ -327,7 +327,7 @@ def notify_availability_form_opened(form):
             f"Заполните доступность до {form.response_deadline}."
         ),
         event_type=Notification.EventType.AVAILABILITY_FORM_OPENED,
-        object_url="/availability",
+        object_url="https://pk-services.dvfu.ru/availability",
         metadata={
             "form_id": form.id,
             "squad_id": form.squad_id,
@@ -354,7 +354,7 @@ def notify_schedule_published(schedule):
             f"{schedule.period_start} — {schedule.period_end}."
         ),
         event_type=Notification.EventType.SCHEDULE_PUBLISHED,
-        object_url="/schedule",
+        object_url="https://pk-services.dvfu.ru/schedule",
         metadata={
             "schedule_id": schedule.id,
             "squad_id": schedule.squad_id,
@@ -375,7 +375,7 @@ def notify_change_request_created(change_request):
         title="Новая заявка на изменение графика",
         message=f"{requester_name} отправил(а) заявку по смене {entry.date}.",
         event_type=Notification.EventType.CHANGE_REQUEST_CREATED,
-        object_url="/dashboard/change-requests",
+        object_url="https://pk-services.dvfu.ru/dashboard/change-requests",
         metadata={
             "change_request_id": change_request.id,
             "entry_id": entry.id,
@@ -398,7 +398,7 @@ def notify_change_request_approved(change_request):
         title="Заявка одобрена",
         message="Командир одобрил заявку на изменение графика.",
         event_type=Notification.EventType.CHANGE_REQUEST_APPROVED,
-        object_url="/schedule/requests",
+        object_url="https://pk-services.dvfu.ru/schedule/requests",
         metadata={
             "change_request_id": change_request.id,
             "entry_id": change_request.entry_id,
@@ -417,7 +417,7 @@ def notify_change_request_rejected(change_request):
             or "Командир отклонил заявку на изменение графика."
         ),
         event_type=Notification.EventType.CHANGE_REQUEST_REJECTED,
-        object_url="/schedule/requests",
+        object_url="https://pk-services.dvfu.ru/schedule/requests",
         metadata={
             "change_request_id": change_request.id,
             "entry_id": change_request.entry_id,
@@ -437,7 +437,7 @@ def notify_schedule_changed(schedule, users, target_date):
             "Проверьте актуальную информацию в разделе «Мой график»."
         ),
         event_type=Notification.EventType.SCHEDULE_CHANGED,
-        object_url="/schedule",
+        object_url="https://pk-services.dvfu.ru/schedule",
         metadata={
             "schedule_id": schedule.id,
             "squad_id": schedule.squad_id,
